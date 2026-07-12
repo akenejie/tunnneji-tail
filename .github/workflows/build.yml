@@ -3,6 +3,7 @@ name: Build
 on:
   push:
     branches: [ "main" ]
+    tags: [ "v*" ]
   pull_request:
     branches: [ "main" ]
 
@@ -11,7 +12,42 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          # Linux
+          - goos: linux
+            goarch: amd64
+            os: ubuntu-latest
+            artifact: tunnneji-tail-linux-amd64
+          - goos: linux
+            goarch: arm64
+            os: ubuntu-latest
+            artifact: tunnneji-tail-linux-arm64
+          - goos: linux
+            goarch: arm
+            os: ubuntu-latest
+            artifact: tunnneji-tail-linux-arm
+          - goos: linux
+            goarch: "386"
+            os: ubuntu-latest
+            artifact: tunnneji-tail-linux-386
+          # Windows
+          - goos: windows
+            goarch: amd64
+            os: windows-latest
+            artifact: tunnneji-tail-windows-amd64.exe
+          - goos: windows
+            goarch: arm64
+            os: windows-latest
+            artifact: tunnneji-tail-windows-arm64.exe
+          # macOS
+          - goos: darwin
+            goarch: amd64
+            os: macos-latest
+            artifact: tunnneji-tail-darwin-amd64
+          - goos: darwin
+            goarch: arm64
+            os: macos-latest
+            artifact: tunnneji-tail-darwin-arm64
 
     steps:
     - uses: actions/checkout@v4
@@ -23,4 +59,34 @@ jobs:
         cache: true
 
     - name: Build
-      run: go build -v -trimpath -tags "ts_omit_systray,ts_omit_webclient,ts_omit_webbrowser,ts_omit_qrcodes,ts_omit_colorable,ts_omit_desktop_sessions,ts_omit_completion,ts_omit_completion_scripts,ts_omit_drive" -ldflags="-s -w" ./cmd/tunnneji-tail
+      env:
+        GOOS: ${{ matrix.goos }}
+        GOARCH: ${{ matrix.goarch }}
+      run: go build -v -trimpath -tags "ts_omit_systray,ts_omit_webclient,ts_omit_webbrowser,ts_omit_qrcodes,ts_omit_colorable,ts_omit_desktop_sessions,ts_omit_completion,ts_omit_completion_scripts,ts_omit_drive" -ldflags="-s -w" -o ${{ matrix.artifact }} ./cmd/tunnneji-tail
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.artifact }}
+        path: ${{ matrix.artifact }}
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+        merge-multiple: true
+
+    - name: Create draft release
+      uses: softprops/action-gh-release@v2
+      with:
+        draft: true
+        generate_release_notes: true
+        files: artifacts/*
