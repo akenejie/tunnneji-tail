@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/netip"
 
+	"tailscale.com/health"
 	"tailscale.com/ipn/store"
 	"tailscale.com/net/netmon"
 	"tailscale.com/net/tsdial"
@@ -52,6 +53,7 @@ func createUserspaceEngine(logf logger.Logf, sys *tsd.System, stateFile string) 
 		SetSubsystem:  sys.Set,
 		ControlKnobs:  sys.ControlKnobs(),
 		EventBus:      sys.Bus.Get(),
+		HealthTracker: health.NewTracker(sys.Bus.Get()),
 	}
 
 	// Create userspace engine with netstack
