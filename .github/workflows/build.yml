@@ -23,4 +23,4 @@ jobs:
         cache: true
 
     - name: Build
-      run: go build -v ./...
+      run: go build -v -trimpath -tags "ts_omit_systray,ts_omit_webclient,ts_omit_webbrowser,ts_omit_qrcodes,ts_omit_colorable,ts_omit_desktop_sessions,ts_omit_completion,ts_omit_completion_scripts,ts_omit_drive" -ldflags="-s -w" ./cmd/tunnneji-tail
