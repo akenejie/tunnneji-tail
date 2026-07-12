@@ -209,7 +209,7 @@ jobs:
     - name: Save Cache
       # Save cache even on failure, but only on cache miss and main branch to avoid thrashing.
       if: always() && steps.restore-cache.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
-      uses: actions/cache/save@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         # Note: this is only saving the build cache. Mod cache is shared amongst
         # all jobs in the workflow.
@@ -336,7 +336,7 @@ jobs:
     - name: Save Cache
       # Save cache even on failure, but only on cache miss and main branch to avoid thrashing.
       if: always() && steps.restore-cache.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
-      uses: actions/cache/save@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/Library/Caches/go-build
         key: ${{ runner.os }}-go-test-${{ hashFiles('**/go.sum') }}-${{ github.job }}-${{ github.run_id }}
@@ -474,7 +474,7 @@ jobs:
     - name: Save Cache
       # Save cache even on failure, but only on cache miss and main branch to avoid thrashing.
       if: always() && steps.restore-cache.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
-      uses: actions/cache/save@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         # Note: this is only saving the build cache. Mod cache is shared amongst
         # all jobs in the workflow.
@@ -566,7 +566,7 @@ jobs:
     - name: Save Cache
       # Save cache even on failure, but only on cache miss and main branch to avoid thrashing.
       if: always() && steps.restore-cache.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
-      uses: actions/cache/save@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         # Note: this is only saving the build cache. Mod cache is shared amongst
         # all jobs in the workflow.
@@ -659,7 +659,7 @@ jobs:
     - name: Save Cache
       # Save cache even on failure, but only on cache miss and main branch to avoid thrashing.
       if: always() && steps.restore-cache.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
-      uses: actions/cache/save@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         # Note: this is only saving the build cache. Mod cache is shared amongst
         # all jobs in the workflow.
