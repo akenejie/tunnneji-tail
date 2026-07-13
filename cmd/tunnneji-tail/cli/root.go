@@ -49,6 +49,7 @@ Usage:
 Options:
   -K[n]     <key>       API auth key for VPN group n (required for first run)
   -T[n]     <path>      State file path (default: tailscaled.state)
+  -H[n]     <name>      Hostname for VPN group n (default: tailscaled)
   -S[n][s]  <mapping>   Server: listen on VPN port, forward to target
   -C[n][s]  <mapping>   Client: listen on local port, forward to VPN target
   -A[S|C][n][s] <ips>   Whitelist source IPs (S=server, C=client)
@@ -138,6 +139,7 @@ type PortEntry struct {
 type TunnelGroup struct {
 	AuthKey   string
 	StateFile string
+	Hostname  string // -H: hostname override for this VPN group
 	Ports     map[string]*PortEntry // key: sub identifier ("", "A", "B", ...)
 	DropICMP  bool                  // true if all server ports have passwords (untrusted VPN)
 }
@@ -285,13 +287,15 @@ func parseTunnelArgs(args []string) ([]TunnelGroup, error) {
 		mapping   string
 	}
 	type rawGroup struct {
-		authKey      string
-		authKeySet   bool
-		stateFile    string
-		stateFileSet bool
-		entries      map[string]rawEntry   // sub → port mapping
-		accepts      map[string]string     // dir+sub → IP list ("S", "SA", "C", "CA")
-		passwords    map[string]string     // dir+sub → password ("", "S", "SA", "C", "CA")
+		authKey       string
+		authKeySet    bool
+		stateFile     string
+		stateFileSet  bool
+		hostname      string
+		hostnameSet   bool
+		entries       map[string]rawEntry   // sub → port mapping
+		accepts       map[string]string     // dir+sub → IP list ("S", "SA", "C", "CA")
+		passwords     map[string]string     // dir+sub → password ("", "S", "SA", "C", "CA")
 	}
 
 	raw := make(map[int]*rawGroup)
@@ -309,6 +313,7 @@ func parseTunnelArgs(args []string) ([]TunnelGroup, error) {
 
 	lastAuthKey := ""
 	lastStateFile := ""
+	lastHostname := ""
 	inheritedPasswords := make(map[string]string) // group -1 passwords: key → password
 	inheritedAccepts := make(map[string]string)   // group -1 accepts: key → ip list
 
@@ -321,7 +326,7 @@ func parseTunnelArgs(args []string) ([]TunnelGroup, error) {
 		flagName, groupNum, sub, dir := parseFlag(arg)
 
 		switch flagName {
-		case "K", "S", "C", "T", "A", "P":
+		case "K", "S", "C", "T", "A", "P", "H":
 		default:
 			return nil, fmt.Errorf("unknown flag: %s", arg)
 		}
@@ -356,6 +361,23 @@ func parseTunnelArgs(args []string) ([]TunnelGroup, error) {
 			g.stateFile = args[i]
 			g.stateFileSet = true
 			lastStateFile = args[i]
+			continue
+		}
+
+		if flagName == "H" {
+			i++
+			if i >= len(args) {
+				return nil, fmt.Errorf("-H requires a value")
+			}
+			g := getGroup(groupNum)
+			if g.hostnameSet {
+				return nil, fmt.Errorf("duplicate -H for group %d", groupNum)
+			}
+			g.hostname = args[i]
+			g.hostnameSet = true
+			if groupNum == -1 {
+				lastHostname = args[i]
+			}
 			continue
 		}
 
@@ -472,6 +494,19 @@ func parseTunnelArgs(args []string) ([]TunnelGroup, error) {
 		}
 	}
 
+	// Inherit -H from group -1 (applies to all groups)
+	if lastHostname != "" {
+		for _, n := range nums {
+			if n == -1 {
+				continue
+			}
+			rg := raw[n]
+			if !rg.hostnameSet {
+				rg.hostname = lastHostname
+			}
+		}
+	}
+
 	// Check coexistence limit
 	hasNoNumberGroup := false
 	hasNumberedGroup := false
@@ -560,6 +595,7 @@ func parseTunnelArgs(args []string) ([]TunnelGroup, error) {
 		g := TunnelGroup{
 			AuthKey:   rg.authKey,
 			StateFile: rg.stateFile,
+			Hostname:  rg.hostname,
 			Ports:     make(map[string]*PortEntry),
 		}
 

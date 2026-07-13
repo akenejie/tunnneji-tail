@@ -70,7 +70,7 @@ You can slice your permissions even further by assigning lowercase letters (`a`,
 Their internal processing is completely equivalent, and port group identifiers like `-S1a` or `-C1a` can be applied to both in exactly the same way.
 (However, there is one key difference: the stealth mode decision—whether to ignore ICMP ping requests—only considers the state of the `-PS` side, i.e., whether ports exposed to the VPN are password-protected.)
 
-### Differences in Rules: Password (`-P`) vs. IP Whitelist (`-A`)
+### Differences in Rules: Password (`-P`) vs. IP Whitelist (`-A`) vs. Hostname (`-H`)
 * **Password (`-P`) can omit the direction:**
   When specified alone (like `-P mypassword` or `-P1 mypassword`), the password is automatically applied to **both directions** (`-S` and `-C`). This is because it's common to use the same password for both inbound and outbound connections.
 * **IP Whitelist (`-A`) REQUIRES a direction:**
@@ -79,6 +79,8 @@ Their internal processing is completely equivalent, and port group identifiers l
   * Example: `-AC 127.0.0.1` (Allow access only from your own local PC)
   * Example: `-AS1a 100.64.0.0/10` (Allow access only from a specific subnet within VPN group 1, port group 'a')
   *Note: You can specify multiple IPs by joining them with an underscore `_` (e.g., `-AS 100.64.0.1_100.64.0.2`).*
+* **Hostname (`-H`) has no direction:**
+  Unlike `-P` and `-A`, `-H` does not use direction selectors (`S`/`C`). It only accepts `-H` (all groups) or `-H1`, `-H2` (per group).
 
 ## Build Instructions
 You can build the binary directly using Go. No external build scripts are required.
@@ -205,7 +207,7 @@ Bさんが、Aさんの共有したサーバー（ポート `443`）を見に行
 内部的な処理は完全に対等であり、`-S1a` や `-C1a` のようにポートグループ識別子も全く同じように適用できます。
 （ただし、ping要求を無視するかどうかの判定は`-PS` 側（VPN側にパスワード付きで発信する設定）だけが考慮されます）
 
-### パスワード (`-P`) と IPホワイトリスト (`-A`) の指定ルールの違い
+### パスワード (`-P`) と IPホワイトリスト (`-A`) と ホスト名 (`-H`) の指定ルールの違い
 * **パスワード (`-P`) は方向指定を省略可能:**
 	`-P mypassword` や `-P1 mypassword` のように単体で指定した場合、それは両方向（`-S` と `-C` の両方）に適用されます。行きと帰りで同じパスワードを使い回すことがあるからです。
 * **IPホワイトリスト (`-A`) は方向指定が必須:**
@@ -214,6 +216,8 @@ Bさんが、Aさんの共有したサーバー（ポート `443`）を見に行
 	* 例: `-AC 127.0.0.1` (自分のPCのローカルアクセスからのみ許可)
 	* 例: `-AS1a 100.64.0.0/10` (番号1のVPNのポートグループaに対して、VPN内の特定のサブネットからのみ許可)
 	※アンダースコア `_` を使って複数のIPを繋げることも可能です（例: `-AS 100.64.0.1_100.64.0.2`）。
+* **ホスト名 (`-H`) は方向指定がそもそもない:**
+	`-P` や `-A` とは異なり、`-H` には `S`/`C` の方向指定子はありません。`-H`（全グループ）または `-H1`、`-H2`（グループ別）のみ指定可能です。
 
 ## ビルド方法
 Go言語の環境があれば、外部スクリプトなしで直接ビルド可能です。

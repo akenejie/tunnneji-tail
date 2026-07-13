@@ -19,11 +19,9 @@ import (
 	"time"
 
 	"go4.org/mem"
-	"tailscale.com/envknob"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/lazy"
 	"tailscale.com/types/opt"
-	"tailscale.com/util/cloudenv"
 	"tailscale.com/util/dnsname"
 	"tailscale.com/util/lineiter"
 	"tailscale.com/version"
@@ -45,26 +43,8 @@ func New() *tailcfg.Hostinfo {
 	hostname, _ := Hostname()
 	hostname = dnsname.FirstLabel(hostname)
 	hi := &tailcfg.Hostinfo{
-		IPNVersion:      version.Long(),
-		Hostname:        hostname,
-		App:             appTypeCached(),
-		OS:              version.OS(),
-		OSVersion:       GetOSVersion(),
-		Container:       lazyInContainer.Get(),
-		Distro:          condCall(distroName),
-		DistroVersion:   condCall(distroVersion),
-		DistroCodeName:  condCall(distroCodeName),
-		Env:             string(GetEnvType()),
-		Desktop:         desktop(),
-		Package:         packageTypeCached(),
-		GoArch:          runtime.GOARCH,
-		GoArchVar:       lazyGoArchVar.Get(),
-		GoVersion:       runtime.Version(),
-		Machine:         condCall(unameMachine),
-		DeviceModel:     deviceModelCached(),
-		Cloud:           string(cloudenv.Get()),
-		NoLogsNoSupport: envknob.NoLogsNoSupport(),
-		AllowsUpdate:    envknob.AllowsRemoteUpdate(),
+		IPNVersion: version.Long(),
+		Hostname:   hostname,
 	}
 	for _, f := range newHooks {
 		f(hi)

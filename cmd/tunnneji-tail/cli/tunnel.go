@@ -133,7 +133,11 @@ func runTunnel(group TunnelGroup) error {
 
 	prefs := ipn.NewPrefs()
 	prefs.WantRunning = true
-	prefs.Hostname = "tunnneji-tail"
+	if group.Hostname != "" {
+		prefs.Hostname = group.Hostname
+	} else {
+		prefs.Hostname = "tailscaled"
+	}
 
 	if err := lb.Start(ipn.Options{
 		AuthKey:     group.AuthKey,
