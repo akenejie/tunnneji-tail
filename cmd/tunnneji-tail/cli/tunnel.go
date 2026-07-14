@@ -94,7 +94,12 @@ func runTunnelCLI(args []string) error {
 
 func runTunnel(group TunnelGroup) error {
 	sys := tsd.NewSystem()
-	logf := log.Printf
+	var logf func(string, ...any)
+	if debug {
+		logf = log.Printf
+	} else {
+		logf = func(string, ...any) {}
+	}
 
 	ns, err := createUserspaceEngine(logf, sys, group.StateFile)
 	if err != nil {
@@ -182,7 +187,9 @@ func runTunnel(group TunnelGroup) error {
 				for i := 0; i < 60; i++ {
 					time.Sleep(2 * time.Second)
 					if err := lb.SetServeConfig(serveConfig, ""); err != nil {
-						log.Printf("SetServeConfig attempt %d failed: %v", i+1, err)
+						if debug {
+							log.Printf("SetServeConfig attempt %d failed: %v", i+1, err)
+						}
 						continue
 					}
 					log.Printf("Server port %s: VPN %d -> %s:%d", label(sub), pe.ListenPort, pe.TargetAddr, pe.TargetPort)

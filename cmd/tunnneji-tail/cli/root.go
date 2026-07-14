@@ -19,6 +19,7 @@ import (
 )
 
 var version = strings.TrimSpace(tailscaleroot.VersionDotTxt)
+var debug bool
 
 func Run(args []string) error {
 	if len(args) == 0 {
@@ -56,6 +57,7 @@ Options:
   -C[n][s]  <mapping>   Client: listen on local port, forward to VPN target
   -A[S|C][n][s] <ips>   Whitelist source IPs (S=server, C=client)
   -P[S|C][n][s] <pass>  ChaCha20 password for data encryption
+  -D                  Debug mode (show tailscale internal logs)
 
 Mapping format:
   port:addr:port    full form (listen:target-addr:target-port)
@@ -321,6 +323,10 @@ func parseTunnelArgs(args []string) ([]TunnelGroup, error) {
 
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
+		if arg == "-D" {
+			debug = true
+			continue
+		}
 		if !strings.HasPrefix(arg, "-") {
 			return nil, fmt.Errorf("unexpected argument: %s", arg)
 		}
