@@ -40,14 +40,15 @@ func runTunnelCLI(args []string) error {
 		} else {
 			log.Printf("  state: %s", g.StateFile)
 		}
-		for label, pe := range g.Ports {
-			if label == "" {
-				label = "-"
+		for _, pe := range g.Ports {
+			sub := pe.Sub
+			if sub == "" {
+				sub = "-"
 			}
 			if pe.IsServer {
-				log.Printf("    port %s: VPN %d -> %s:%d", label, pe.ListenPort, pe.TargetAddr, pe.TargetPort)
+				log.Printf("  port %s: VPN %d -> %s:%d", sub, pe.ListenPort, pe.TargetAddr, pe.TargetPort)
 			} else {
-				log.Printf("    port %s: local %d -> VPN %s:%d", label, pe.ListenPort, pe.TargetAddr, pe.TargetPort)
+				log.Printf("  port %s: local %d -> VPN %s:%d", sub, pe.ListenPort, pe.TargetAddr, pe.TargetPort)
 			}
 		}
 	}
@@ -172,7 +173,8 @@ func runTunnel(group TunnelGroup) error {
 	}()
 
 	// Set up all ports
-	for sub, pe := range group.Ports {
+	for _, pe := range group.Ports {
+		sub := pe.Sub
 		if pe.IsServer {
 			// Server: VPN listens → dials local target
 			// Use SetServeConfig to tell netstack to forward
@@ -192,7 +194,7 @@ func runTunnel(group TunnelGroup) error {
 						}
 						continue
 					}
-					log.Printf("Server port %s: VPN %d -> %s:%d", label(sub), pe.ListenPort, pe.TargetAddr, pe.TargetPort)
+					log.Printf("Server port %s: VPN %d -> %s:%d", portLabel(sub), pe.ListenPort, pe.TargetAddr, pe.TargetPort)
 					return
 				}
 				log.Printf("Warning: failed to set serve config after 60 attempts")
@@ -205,7 +207,7 @@ func runTunnel(group TunnelGroup) error {
 			if err != nil {
 				return fmt.Errorf("failed to listen on %s: %w", listenAddr, err)
 			}
-			log.Printf("Client port %s: local %d -> VPN %s:%d", label(sub), pe.ListenPort, pe.TargetAddr, pe.TargetPort)
+			log.Printf("Client port %s: local %d -> VPN %s:%d", portLabel(sub), pe.ListenPort, pe.TargetAddr, pe.TargetPort)
 
 			go func(pe *PortEntry, listener net.Listener) {
 				for {
@@ -229,7 +231,7 @@ func runTunnel(group TunnelGroup) error {
 	return nil
 }
 
-func label(sub string) string {
+func portLabel(sub string) string {
 	if sub == "" {
 		return "-"
 	}
