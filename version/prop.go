@@ -329,18 +329,13 @@ var getMeta lazy.SyncValue[Meta]
 func GetMeta() Meta {
 	return getMeta.Get(func() Meta {
 		return Meta{
-			MajorMinorPatch:    majorMinorPatch(),
-			Short:              Short(),
-			Long:               Long(),
-			GitCommitTime:      getEmbeddedInfo().commitTime,
-			GitCommit:          gitCommit(),
-			GitDirty:           gitDirty(),
-			OSVariant:          osVariant(),
-			ExtraGitCommit:     extraGitCommitStamp,
-			IsDev:              isDev(),
-			UnstableBranch:     IsUnstableBuild(),
-			TailscaleGoGitHash: tailscaleToolchainRev(),
-			Cap:                int(tailcfg.CurrentCapabilityVersion),
+			MajorMinorPatch: majorMinorPatch(),
+			Short:           Short(),
+			Long:            Long(),
+			OSVariant:       osVariant(),
+			IsDev:           isDev(),
+			UnstableBranch:  IsUnstableBuild(),
+			Cap:             int(tailcfg.CurrentCapabilityVersion),
 		}
 	})
 }

@@ -14,9 +14,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	tailscaleroot "tailscale.com"
 )
 
-const version = "0.1.0"
+var version = strings.TrimSpace(tailscaleroot.VersionDotTxt)
 
 func Run(args []string) error {
 	if len(args) == 0 {

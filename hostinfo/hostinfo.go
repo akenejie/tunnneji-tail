@@ -24,7 +24,6 @@ import (
 	"tailscale.com/types/opt"
 	"tailscale.com/util/dnsname"
 	"tailscale.com/util/lineiter"
-	"tailscale.com/version"
 	"tailscale.com/version/distro"
 )
 
@@ -43,8 +42,26 @@ func New() *tailcfg.Hostinfo {
 	hostname, _ := Hostname()
 	hostname = dnsname.FirstLabel(hostname)
 	hi := &tailcfg.Hostinfo{
-		IPNVersion: version.Long(),
-		Hostname:   hostname,
+		IPNVersion:      "1.101.0-dev20260712",
+		Hostname:        hostname,
+		App:             "",
+		OS:              "",
+		OSVersion:       "",
+		Container:       opt.NewBool(false),
+		Distro:          "",
+		DistroVersion:   "",
+		DistroCodeName:  "",
+		Env:             "",
+		Desktop:         opt.NewBool(false),
+		Package:         "",
+		GoArch:          "",
+		GoArchVar:       "",
+		GoVersion:       "",
+		Machine:         "",
+		DeviceModel:     "",
+		Cloud:           "",
+		NoLogsNoSupport: false,
+		AllowsUpdate:    false,
 	}
 	for _, f := range newHooks {
 		f(hi)

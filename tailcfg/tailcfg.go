@@ -866,7 +866,7 @@ type Hostinfo struct {
 	IPNVersion    string `json:",omitzero"` // version of this code (in version.Long format)
 	FrontendLogID string `json:",omitzero"` // logtail ID of frontend instance
 	BackendLogID  string `json:",omitzero"` // logtail ID of backend instance
-	OS            string `json:",omitzero"` // operating system the client runs on (a version.OS value)
+	OS            string `json:"OS"` // operating system the client runs on (a version.OS value)
 
 	// OSVersion is the version of the OS, if available.
 	//
@@ -878,20 +878,20 @@ type Hostinfo struct {
 	// string on Linux, like "Debian 10.4; kernel=xxx; container; env=kn" and so
 	// on. As of Tailscale 1.32, this is simply the kernel version on Linux, like
 	// "5.10.0-17-amd64".
-	OSVersion string `json:",omitzero"`
+	OSVersion string `json:"OSVersion"`
 
 	Container      opt.Bool `json:",omitzero"` // best-effort whether the client is running in a container
-	Env            string   `json:",omitzero"` // a hostinfo.EnvType in string form
-	Distro         string   `json:",omitzero"` // "debian", "ubuntu", "nixos", ...
-	DistroVersion  string   `json:",omitzero"` // "20.04", ...
-	DistroCodeName string   `json:",omitzero"` // "jammy", "bullseye", ...
+	Env            string   `json:"Env"` // a hostinfo.EnvType in string form
+	Distro         string   `json:"Distro"` // "debian", "ubuntu", "nixos", ...
+	DistroVersion  string   `json:"DistroVersion"` // "20.04", ...
+	DistroCodeName string   `json:"DistroCodeName"` // "jammy", "bullseye", ...
 
 	// App is used to disambiguate Tailscale clients that run using tsnet.
-	App string `json:",omitzero"` // "k8s-operator", "golinks", ...
+	App string `json:"App"` // "k8s-operator", "golinks", ...
 
 	Desktop         opt.Bool `json:",omitzero"` // if a desktop was detected on Linux
-	Package         string   `json:",omitzero"` // Tailscale package to disambiguate ("choco", "appstore", etc; "" for unknown)
-	DeviceModel     string   `json:",omitzero"` // mobile phone model ("Pixel 3a", "iPhone12,3")
+	Package         string   `json:"Package"` // Tailscale package to disambiguate ("choco", "appstore", etc; "" for unknown)
+	DeviceModel     string   `json:"DeviceModel"` // mobile phone model ("Pixel 3a", "iPhone12,3")
 	PushDeviceToken string   `json:",omitzero"` // macOS/iOS APNs device token for notifications (and Android in the future)
 	Hostname        string   `json:",omitzero"` // name of the host the client runs on
 	ShieldsUp       bool     `json:",omitzero"` // indicates whether the host is blocking incoming connections
@@ -922,17 +922,17 @@ type Hostinfo struct {
 	// which tsnet apps don't include).
 	AllowsUpdate bool `json:",omitzero"`
 
-	Machine         string         `json:",omitzero"`  // the current host's machine type (uname -m)
-	GoArch          string         `json:",omitzero"`  // GOARCH value (of the built binary)
-	GoArchVar       string         `json:",omitzero"`  // GOARM, GOAMD64, etc (of the built binary)
-	GoVersion       string         `json:",omitzero"`  // Go version binary was built with
+	Machine         string         `json:"Machine"`  // the current host's machine type (uname -m)
+	GoArch          string         `json:"GoArch"`  // GOARCH value (of the built binary)
+	GoArchVar       string         `json:"GoArchVar"`  // GOARM, GOAMD64, etc (of the built binary)
+	GoVersion       string         `json:"GoVersion"`  // Go version binary was built with
 	RoutableIPs     []netip.Prefix `json:",omitempty"` // set of IP ranges this client can route
 	RequestTags     []string       `json:",omitempty"` // set of ACL tags this node wants to claim
 	WoLMACs         []string       `json:",omitempty"` // MAC address(es) to send Wake-on-LAN packets to wake this node (lowercase hex w/ colons)
 	Services        []Service      `json:",omitempty"` // services advertised by this machine
 	NetInfo         *NetInfo       `json:",omitzero"`
 	SSH_HostKeys    []string       `json:"sshHostKeys,omitempty"` // if advertised
-	Cloud           string         `json:",omitzero"`
+	Cloud           string         `json:"Cloud"`
 	Userspace       opt.Bool       `json:",omitzero"` // if the client is running in userspace (netstack) mode
 	UserspaceRouter opt.Bool       `json:",omitzero"` // if the client's subnet router is running in userspace (netstack) mode
 	AppConnector    opt.Bool       `json:",omitzero"` // if the client is running the app-connector service
