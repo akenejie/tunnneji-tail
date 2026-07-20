@@ -14,6 +14,7 @@ Because we treat the VPN with absolute zero-trust, we achieve a highly unconvent
 * **App-Layer Encryption (`-P`):** Add ChaCha20 encryption directly on top of the VPN tunnel. You can share access securely without trusting the underlying network peers. (If you *do* trust the network, simply omit this option).
 * **Total Stealth Mode:** If all the ports you are sharing are password-protected, or if you are only acting as a client (sharing no ports), `tunnneji-tail` silently drops all ICMP ping requests. To the rest of the VPN, your machine does not even exist.
 * **No Root, No System Changes:** Runs entirely in userspace. Your overall OS network stack remains completely untouched.
+* **Portable State File:** Authentication with Tailscale works by creating a state file (default: `ttstate.json`) on first run with an API key; subsequent connections reuse this file to maintain the same IP address. The official Tailscale tools bind state files to device-specific values like MAC addresses, but to prevent telemetry leakage and avoid environment-dependent behavior, `tunnneji-tail` generates random MAC addresses and serial numbers at first run. This means the state file contains all authentication credentials needed to connect. While incompatible with official Tailscale tools, sharing the state file allows anyone with `tunnneji-tail` to create a tunnel from any device, with pre-assigned VPN IP addresses.
 
 ## Step-by-Step Guide
 ### 1. Basic Sharing (Person A)
@@ -151,8 +152,9 @@ OSのネットワーク環境（ルーティングテーブルや仮想NIC）を
 この極端なゼロトラスト設計により、**全く新しいマルチテナント運用**が可能になります。例えば「高校の友達」と「大学の友達」という全く無関係なグループを、**同じ1つのVPN**に招待してしまって問題ありません。ポートごとに別のパスワード (`-P1a`, `-P1b`) を設定できるため、パスワードを知らなければお互いの環境にはアクセスできないからです。安全性を担保したまま1つのVPNに全員を同居させることで、VPNの生存確認パケット（キープアライブ）などが減り、複数VPNを立ち上げるよりも通信が大幅に効率化されます。これは非常に特殊で強力なVPNの運用方法です。
 * **高速なUDP通信** `cloudflared+wstunnel`や`ssh -R / ssh -L`はTCP通信なので、データに破損がないか調べながら通信を行います。しかし、データの破損チェックはトンネルに実装しなくても、内部のプロトコルがやってくれるはずです。更には、トンネルの破損チェックと内部の破損チェックが重なると、確認用パケットだらけになり、本当に送りたい内容が送れずに通信が低速化します（TCPメルトダウン）。そこで、トンネルにUDPを用いる方法がないかと模索した結果、VPNが最適だと解釈しました。
 * **アプリケーション層での暗号化 (`-P`):** 共有する通信内容をChaCha20アルゴリズムでさらに暗号化できます。VPN自体を信用しなくても安全にやり取りが可能です。（信頼できる身内だけのVPNなら、このオプションを外して手軽に共有することもできます）。
-* **完全なステルスモード:** 共有する全ポートがパスワードで保護されている場合、または共有するポートが一つもない（クライアント* **環境を汚さない (No Root):** 管理者権限は不要です。既存のネットワーク環境には一切影響を与えません。
-としての利用のみ）場合、このツールはICMP ping要求を完全に無視します。VPN内からは、あなたのマシンの存在すら見えなくなります。
+* **完全なステルスモード:** 共有する全ポートがパスワードで保護されている場合、または共有するポートが一つもない場合、このツールはICMP ping要求を完全に無視するため、VPN内からは、その端末の存在すら見えなくなります。
+* **環境汚染なし:** 管理者権限は不要です。既存のネットワーク環境には一切影響を与えません。
+* **状態ファイルの可搬性:** Tailscalへの認証は、初回にAPIキーで認証すると、状態ファイル（デフォルトで`ttstate.json`）が生成され、2回目以降は状態ファイルを使って同じIPアドレスでトンネル作成が可能です。Tailscale公式ツールでは、状態ファイルに加えて端末のMACアドレス等の環境の値を照合していましたが、テレメトリ防止やの観点から環境依存な仕様にせず、MACアドレスなどの端末情報は状態ファイルの初回作成時にランダムに生成することにしました。そのため、このソフトの状態ファイルはTailscalへの認証情報をすべて含んだファイルです。Tailscale公式ツールとの互換性はありませんが、状態ファイルを共有することで、tunnneji-tailを使って任意の端末からトンネルの作成が可能かつ、VPN内部のIPアドレスも配布前に設定することが可能となります。
 
 ## 使い方（ステップバイステップ）
 ### 1. 基本の共有（共有元: Aさん）
