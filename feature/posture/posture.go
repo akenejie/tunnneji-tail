@@ -81,21 +81,37 @@ func handleC2NPostureIdentityGet(b *ipnlocal.LocalBackend, w http.ResponseWriter
 	}
 
 	if choice.ShouldEnable(b.Prefs().PostureChecking()) {
-		res.SerialNumbers, err = posture.GetSerialNumbers(b.PolicyClient(), e.logf)
-		if err != nil {
-			e.logf("c2n: GetSerialNumbers returned error: %v", err)
-			b.HealthTracker().SetUnhealthy(postureSerialWarnable, health.Args{health.ArgError: err.Error()})
+		// Use posture data from state file if available (cross-machine portability).
+		// Fall back to live environment data only if state file has no stored values.
+		stateSerials, stateHwAddrs := b.PostureData()
+
+		if len(stateSerials) > 0 {
+			// Use stored serial numbers from state file
+			res.SerialNumbers = stateSerials
 		} else {
-			b.HealthTracker().SetHealthy(postureSerialWarnable)
+			// Fall back to live environment (original behavior)
+			res.SerialNumbers, err = posture.GetSerialNumbers(b.PolicyClient(), e.logf)
+			if err != nil {
+				e.logf("c2n: GetSerialNumbers returned error: %v", err)
+				b.HealthTracker().SetUnhealthy(postureSerialWarnable, health.Args{health.ArgError: err.Error()})
+			} else {
+				b.HealthTracker().SetHealthy(postureSerialWarnable)
+			}
 		}
 
 		// TODO(tailscale/corp#21371, 2024-07-10): once this has landed in a stable release
 		// and looks good in client metrics, remove this parameter and always report MAC
 		// addresses.
 		if r.FormValue("hwaddrs") == "true" {
-			res.IfaceHardwareAddrs, err = e.getHardwareAddrs()
-			if err != nil {
-				e.logf("c2n: GetHardwareAddrs returned error: %v", err)
+			if len(stateHwAddrs) > 0 {
+				// Use stored hardware addresses from state file
+				res.IfaceHardwareAddrs = stateHwAddrs
+			} else {
+				// Fall back to live environment (original behavior)
+				res.IfaceHardwareAddrs, err = e.getHardwareAddrs()
+				if err != nil {
+					e.logf("c2n: GetHardwareAddrs returned error: %v", err)
+				}
 			}
 		}
 	} else {

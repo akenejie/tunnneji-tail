@@ -7,8 +7,10 @@ package controlclient
 
 import (
 	"crypto"
+	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"time"
@@ -135,7 +137,11 @@ func findIdentity(subject string, st certstore.Store) (certstore.Identity, []*x5
 // using that identity's public key. In addition to the signature, the full
 // certificate chain is included so that the control server can validate the
 // certificate from a copy of the root CA's certificate.
-func signRegisterRequest(polc policyclient.Client, req *tailcfg.RegisterRequest, serverURL string, serverPubKey, machinePubKey key.MachinePublic) (err error) {
+// signRegisterRequest first checks for a stored device certificate and key
+// from the state file (tunnneji-tail cross-machine portability). If available,
+// it signs the RegisterRequest using that identity. Otherwise, it falls back
+// to querying the local OS certificate store (Windows/macOS).
+func signRegisterRequest(polc policyclient.Client, req *tailcfg.RegisterRequest, serverURL string, serverPubKey, machinePubKey key.MachinePublic, deviceSigningKeyPEM, deviceCertChainPEM []byte) (err error) {
 	defer func() {
 		if err != nil {
 			err = fmt.Errorf("signRegisterRequest: %w", err)
@@ -146,11 +152,19 @@ func signRegisterRequest(polc policyclient.Client, req *tailcfg.RegisterRequest,
 		return errBadRequest
 	}
 
+	// Check if MDM syspolicy has configured a certificate subject.
+	// If not, registration should be unsigned.
 	machineCertificateSubject := getMachineCertificateSubject(polc)
 	if machineCertificateSubject == "" {
 		return errCertificateNotConfigured
 	}
 
+	// If stored device cert/key from state file, use them (cross-machine portability).
+	if len(deviceSigningKeyPEM) > 0 && len(deviceCertChainPEM) > 0 {
+		return signWithStoredCert(req, serverURL, serverPubKey, machinePubKey, deviceSigningKeyPEM, deviceCertChainPEM)
+	}
+
+	// Fall back to OS certificate store.
 	st, err := certstore.Open(certstore.System)
 	if err != nil {
 		return fmt.Errorf("open cert store: %w", err)
@@ -187,6 +201,67 @@ func signRegisterRequest(polc policyclient.Client, req *tailcfg.RegisterRequest,
 		SaltLength: rsa.PSSSaltLengthEqualsHash,
 		Hash:       crypto.SHA256,
 	})
+	if err != nil {
+		return fmt.Errorf("sign: %w", err)
+	}
+
+	return nil
+}
+
+// signWithStoredCert signs the RegisterRequest using a device certificate and
+// key from the state file. This enables cross-machine portability without
+// depending on an OS certificate store.
+func signWithStoredCert(req *tailcfg.RegisterRequest, serverURL string, serverPubKey, machinePubKey key.MachinePublic, signingKeyPEM, certChainPEM []byte) error {
+	block, _ := pem.Decode(signingKeyPEM)
+	if block == nil {
+		return fmt.Errorf("failed to decode signing key PEM")
+	}
+	privKey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+	if err != nil {
+		return fmt.Errorf("parse signing key: %w", err)
+	}
+
+	// Parse the certificate chain from PEM
+	var certs []*x509.Certificate
+	remaining := certChainPEM
+	for len(remaining) > 0 {
+		var block *pem.Block
+		block, remaining = pem.Decode(remaining)
+		if block == nil {
+			break
+		}
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			continue
+		}
+		certs = append(certs, cert)
+	}
+	if len(certs) == 0 {
+		return fmt.Errorf("no valid certificates in chain PEM")
+	}
+
+	// Verify the certificate chain: leaf cert must be signed by the signing key
+	if !certs[0].PublicKey.(*rsa.PublicKey).Equal(&privKey.PublicKey) {
+		return fmt.Errorf("certificate public key does not match signing key")
+	}
+
+	// Use the raw DER bytes of the certificate chain as DeviceCert
+	cl := 0
+	for _, c := range certs {
+		cl += len(c.Raw)
+	}
+	req.DeviceCert = make([]byte, 0, cl)
+	for _, c := range certs {
+		req.DeviceCert = append(req.DeviceCert, c.Raw...)
+	}
+
+	req.SignatureType = tailcfg.SignatureV2
+	h, err := HashRegisterRequest(req.SignatureType, req.Timestamp.UTC(), serverURL, req.DeviceCert, serverPubKey, machinePubKey)
+	if err != nil {
+		return fmt.Errorf("hash: %w", err)
+	}
+
+	req.Signature, err = rsa.SignPKCS1v15(rand.Reader, privKey, crypto.SHA256, h)
 	if err != nil {
 		return fmt.Errorf("sign: %w", err)
 	}

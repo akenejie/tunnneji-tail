@@ -51,7 +51,7 @@ Usage:
 
 Options:
   -K[n]     <key>       API auth key for VPN group n (required for first run)
-  -T[n]     <path>      State file path (default: tailscaled.state)
+  -T[n]     <path>      State file path (default: ttstate.json)
   -H[n]     <name>      Hostname for VPN group n (default: tailscaled)
   -S[n][s]  <mapping>   Server: listen on VPN port, forward to target
   -C[n][s]  <mapping>   Client: listen on local port, forward to VPN target
@@ -559,7 +559,7 @@ func parseTunnelArgs(args []string) ([]TunnelGroup, error) {
 		}
 
 		if rg.stateFile == "" {
-			rg.stateFile = "tailscaled.state"
+			rg.stateFile = "ttstate.json"
 		}
 
 		if len(rg.entries) == 0 {

@@ -1445,6 +1445,54 @@ func (b *LocalBackend) unsanitizedPersist() persist.PersistView {
 	return b.pm.CurrentPrefs().Persist()
 }
 
+// PostureData returns the posture identity data (serial numbers, hardware addresses)
+// from the persisted state. These values are generated at -K time and stored in the
+// state file for cross-machine portability, instead of querying the local environment.
+func (b *LocalBackend) PostureData() (serialNumbers, hardwareAddrs []string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if serialsBytes, err := b.store.ReadState(ipn.PostureSerialNumbersKey); err == nil && len(serialsBytes) > 0 {
+		json.Unmarshal(serialsBytes, &serialNumbers)
+	}
+	if hwBytes, err := b.store.ReadState(ipn.PostureHardwareAddrsKey); err == nil && len(hwBytes) > 0 {
+		json.Unmarshal(hwBytes, &hardwareAddrs)
+	}
+	return
+}
+
+// DeviceSigningKeyPEM returns the RSA private key PEM for device certificate signing,
+// generated at -K time and stored in the state file.
+func (b *LocalBackend) DeviceSigningKeyPEM() []byte {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.deviceSigningKeyPEMLocked()
+}
+
+func (b *LocalBackend) deviceSigningKeyPEMLocked() []byte {
+	v, err := b.store.ReadState(ipn.DeviceSigningKeyPEMKey)
+	if err != nil {
+		return nil
+	}
+	return v
+}
+
+// DeviceCertChainPEM returns the self-signed X.509 certificate PEM for device identity,
+// generated at -K time and stored in the state file.
+func (b *LocalBackend) DeviceCertChainPEM() []byte {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.deviceCertChainPEMLocked()
+}
+
+func (b *LocalBackend) deviceCertChainPEMLocked() []byte {
+	v, err := b.store.ReadState(ipn.DeviceCertChainPEMKey)
+	if err != nil {
+		return nil
+	}
+	return v
+}
+
 // Status returns the latest status of the backend and its
 // sub-components.
 func (b *LocalBackend) Status() *ipnstate.Status {
@@ -3215,6 +3263,8 @@ func (b *LocalBackend) startLocked(opts ipn.Options) error {
 		Shutdown:             ccShutdown,
 		Bus:                  b.sys.Bus.Get(),
 		StartPaused:          b.shouldPauseControlClientLocked(prefs),
+		DeviceSigningKeyPEM:  b.deviceSigningKeyPEMLocked(),
+		DeviceCertChainPEM:   b.deviceCertChainPEMLocked(),
 	})
 	if err != nil {
 		return err

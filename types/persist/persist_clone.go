@@ -24,6 +24,14 @@ func (src *Persist) Clone() *Persist {
 		dst.AttestationKey = src.AttestationKey.Clone()
 	}
 	dst.DisallowedTKAStateIDs = append(src.DisallowedTKAStateIDs[:0:0], src.DisallowedTKAStateIDs...)
+	dst.PostureSerialNumbers = append(src.PostureSerialNumbers[:0:0], src.PostureSerialNumbers...)
+	dst.PostureHardwareAddrs = append(src.PostureHardwareAddrs[:0:0], src.PostureHardwareAddrs...)
+	if src.DeviceSigningKeyPEM != nil {
+		dst.DeviceSigningKeyPEM = append([]byte{}, src.DeviceSigningKeyPEM...)
+	}
+	if src.DeviceCertChainPEM != nil {
+		dst.DeviceCertChainPEM = append([]byte{}, src.DeviceCertChainPEM...)
+	}
 	return dst
 }
 
@@ -37,4 +45,8 @@ var _PersistCloneNeedsRegeneration = Persist(struct {
 	NodeID                tailcfg.StableNodeID
 	AttestationKey        key.HardwareAttestationKey
 	DisallowedTKAStateIDs []string
+	PostureSerialNumbers  []string
+	PostureHardwareAddrs  []string
+	DeviceSigningKeyPEM   []byte
+	DeviceCertChainPEM    []byte
 }{})

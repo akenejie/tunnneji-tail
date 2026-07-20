@@ -8,9 +8,16 @@ package cli
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"log"
+	"math/big"
 	"net"
 	"net/netip"
 	"os"
@@ -21,6 +28,7 @@ import (
 
 	"tailscale.com/ipn"
 	"tailscale.com/ipn/ipnlocal"
+	"tailscale.com/ipn/store"
 	"tailscale.com/net/tsdial"
 	"tailscale.com/tsd"
 	"tailscale.com/types/logid"
@@ -102,7 +110,37 @@ func runTunnel(group TunnelGroup) error {
 		logf = func(string, ...any) {}
 	}
 
-	ns, err := createUserspaceEngine(logf, sys, group.StateFile)
+	// Create state store and manage auth key for cross-machine portability
+	stateStore, err := store.NewFileStore(logf, group.StateFile)
+	if err != nil {
+		return fmt.Errorf("failed to create state store: %w", err)
+	}
+
+	// Load auth key: prefer CLI-provided, then fall back to stored
+	authKey := group.AuthKey
+	if authKey == "" {
+		if stored, err := stateStore.ReadState(ipn.AuthKeyStateKey); err == nil && len(stored) > 0 {
+			authKey = string(stored)
+			if debug {
+				log.Printf("Loaded auth key from state file")
+			}
+		}
+	}
+	// Persist auth key to state file for future cross-machine use
+	if group.AuthKey != "" {
+		if err := ipn.WriteState(stateStore, ipn.AuthKeyStateKey, []byte(group.AuthKey)); err != nil {
+			log.Printf("Warning: failed to persist auth key: %v", err)
+		}
+	}
+
+	// Generate and persist posture data if not already present in state file.
+	// This ensures the state file is a complete, portable identity that doesn't
+	// depend on the local machine's environment.
+	if err := generateAndPersistPostureData(stateStore); err != nil {
+		log.Printf("Warning: failed to generate posture data: %v", err)
+	}
+
+	ns, err := createUserspaceEngine(logf, sys, stateStore)
 	if err != nil {
 		return fmt.Errorf("failed to create engine: %w", err)
 	}
@@ -146,7 +184,7 @@ func runTunnel(group TunnelGroup) error {
 	}
 
 	if err := lb.Start(ipn.Options{
-		AuthKey:     group.AuthKey,
+		AuthKey:     authKey,
 		UpdatePrefs: prefs,
 	}); err != nil {
 		return fmt.Errorf("failed to start backend: %w", err)
@@ -157,6 +195,19 @@ func runTunnel(group TunnelGroup) error {
 		if err := lb.StartLoginInteractive(context.Background()); err != nil {
 			return fmt.Errorf("failed to start login: %w", err)
 		}
+		// Poll and print the auth URL so the user can approve in browser
+		go func() {
+			for i := 0; i < 30; i++ {
+				time.Sleep(1 * time.Second)
+				if st := lb.Status(); st != nil && st.AuthURL != "" {
+					log.Printf("=== LOGIN REQUIRED ===")
+					log.Printf("Open this URL in a browser to authenticate:")
+					log.Printf("%s", st.AuthURL)
+					log.Printf("======================")
+					return
+				}
+			}
+		}()
 	}
 
 	// Print VPN address once available
@@ -236,6 +287,98 @@ func portLabel(sub string) string {
 		return "-"
 	}
 	return sub
+}
+
+// generateAndPersistPostureData generates random posture identity data (serial numbers,
+// MAC addresses, device signing key, and certificate) and writes them to the state store
+// if they don't already exist. This makes the state file a complete, portable identity.
+func generateAndPersistPostureData(stateStore ipn.StateStore) error {
+	// Check if posture data already exists
+	if _, err := stateStore.ReadState(ipn.PostureSerialNumbersKey); err == nil {
+		return nil // already generated
+	}
+
+	// Generate 3 random serial numbers (matching SMBIOS table types: product, baseboard, chassis)
+	serials := make([]string, 3)
+	for i := range serials {
+		b := make([]byte, 12)
+		if _, err := rand.Read(b); err != nil {
+			return fmt.Errorf("generate serial number: %w", err)
+		}
+		serials[i] = fmt.Sprintf("SN-%X-%X-%X", b[:4], b[4:8], b[8:12])
+	}
+	serialsBytes, err := json.Marshal(serials)
+	if err != nil {
+		return fmt.Errorf("marshal serial numbers: %w", err)
+	}
+	if err := ipn.WriteState(stateStore, ipn.PostureSerialNumbersKey, serialsBytes); err != nil {
+		return fmt.Errorf("write serial numbers: %w", err)
+	}
+
+	// Generate 3 random MAC addresses
+	hwAddrs := make([]string, 3)
+	for i := range hwAddrs {
+		b := make([]byte, 6)
+		if _, err := rand.Read(b); err != nil {
+			return fmt.Errorf("generate MAC address: %w", err)
+		}
+		// Set locally administered bit, clear multicast bit
+		b[0] = (b[0] | 0x02) & 0xFE
+		hwAddrs[i] = fmt.Sprintf("%02X:%02X:%02X:%02X:%02X:%02X",
+			b[0], b[1], b[2], b[3], b[4], b[5])
+	}
+	hwAddrsBytes, err := json.Marshal(hwAddrs)
+	if err != nil {
+		return fmt.Errorf("marshal hardware addresses: %w", err)
+	}
+	if err := ipn.WriteState(stateStore, ipn.PostureHardwareAddrsKey, hwAddrsBytes); err != nil {
+		return fmt.Errorf("write hardware addresses: %w", err)
+	}
+
+	// Generate RSA key pair for device signing
+	privKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return fmt.Errorf("generate signing key: %w", err)
+	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(privKey),
+	})
+	if err := ipn.WriteState(stateStore, ipn.DeviceSigningKeyPEMKey, keyPEM); err != nil {
+		return fmt.Errorf("write signing key: %w", err)
+	}
+
+	// Generate self-signed X.509 certificate
+	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return fmt.Errorf("generate certificate serial: %w", err)
+	}
+	template := &x509.Certificate{
+		SerialNumber: serialNumber,
+		Subject: pkix.Name{
+			CommonName:   "tunnneji-tail-device",
+			Organization: []string{"tunnneji-tail"},
+		},
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().Add(10 * 365 * 24 * time.Hour), // 10 years
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		BasicConstraintsValid: true,
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &privKey.PublicKey, privKey)
+	if err != nil {
+		return fmt.Errorf("generate certificate: %w", err)
+	}
+	certPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: certDER,
+	})
+	if err := ipn.WriteState(stateStore, ipn.DeviceCertChainPEMKey, certPEM); err != nil {
+		return fmt.Errorf("write certificate: %w", err)
+	}
+
+	log.Printf("Generated posture data (serials=%d, hwaddrs=%d, signing_key, cert)", len(serials), len(hwAddrs))
+	return nil
 }
 
 func handleConn(conn net.Conn, pe *PortEntry, dialer *tsdial.Dialer) {

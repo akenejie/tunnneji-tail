@@ -12,7 +12,7 @@ import (
 	"net/netip"
 
 	"tailscale.com/health"
-	"tailscale.com/ipn/store"
+	"tailscale.com/ipn"
 	"tailscale.com/net/netmon"
 	"tailscale.com/net/tsdial"
 	"tailscale.com/tsd"
@@ -23,18 +23,15 @@ import (
 
 // createUserspaceEngine creates a WireGuard engine in userspace-networking mode
 // and sets up netstack for VPN dialing.
+// The stateStore parameter is the pre-created state store to use.
 // Returns netstack (nil if creation failed).
-func createUserspaceEngine(logf logger.Logf, sys *tsd.System, stateFile string) (*netstack.Impl, error) {
+func createUserspaceEngine(logf logger.Logf, sys *tsd.System, stateStore ipn.StateStore) (*netstack.Impl, error) {
 	// Set up the dialer before anything that needs it
 	dialer := &tsdial.Dialer{Logf: logf}
 	dialer.SetBus(sys.Bus.Get())
 	sys.Set(dialer)
 
-	// Set up state store from file
-	stateStore, err := store.NewFileStore(logf, stateFile)
-	if err != nil {
-		return nil, err
-	}
+	// Set up state store
 	sys.Set(stateStore)
 
 	// Create network monitor (required by engine for packet processing)
