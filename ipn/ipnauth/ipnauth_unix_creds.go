@@ -20,7 +20,6 @@ func GetConnIdentity(_ logger.Logf, c net.Conn) (ci *ConnIdentity, err error) {
 	_, ci.isUnixSock = c.(*net.UnixConn)
 	if creds, err := peercred.Get(c); err == nil {
 		ci.creds = creds
-		ci.pid, _ = ci.creds.PID()
 	} else if err == peercred.ErrNotImplemented {
 		// peercred.Get is not implemented on this OS (such as OpenBSD)
 		// Just leave creds as nil, as documented.

@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"runtime"
 	"slices"
 	"strings"
 
@@ -40,7 +39,6 @@ var _ ipnext.ProfileStore = (*profileManager)(nil)
 //
 // It is not safe for concurrent use.
 type profileManager struct {
-	goos   string // used for TestProfileManagementWindows
 	store  ipn.StateStore
 	logf   logger.Logf
 	health *health.Tracker
@@ -210,14 +208,6 @@ func (pm *profileManager) DefaultUserProfile(uid ipn.WindowsUserID) ipn.LoginPro
 	b, err := pm.store.ReadState(ipn.CurrentProfileKey(string(uid)))
 	pm.dlogf("DefaultUserProfile: ReadState(%q) = %v, %v", string(uid), len(b), err)
 	if err == ipn.ErrStateNotExist || len(b) == 0 {
-		if runtime.GOOS == "windows" {
-			pm.dlogf("DefaultUserProfile: windows: migrating from legacy preferences")
-			profile, err := pm.migrateFromLegacyPrefs(uid)
-			if err == nil {
-				return profile
-			}
-			pm.logf("failed to migrate from legacy preferences: %v", err)
-		}
 		return pm.NewProfileForUser(uid)
 	}
 
@@ -328,17 +318,6 @@ func (pm *profileManager) findProfileByKey(uid ipn.WindowsUserID, key ipn.StateK
 	return out[0]
 }
 
-func (pm *profileManager) setUnattendedModeAsConfigured() error {
-	if pm.goos != "windows" {
-		return nil
-	}
-
-	if pm.currentProfile.Key() != "" && pm.prefs.ForceDaemon() {
-		return pm.WriteState(ipn.ServerModeStartKey, []byte(pm.currentProfile.Key()))
-	} else {
-		return pm.WriteState(ipn.ServerModeStartKey, nil)
-	}
-}
 
 // SetPrefs sets the current profile's prefs to the provided value.
 // It also saves the prefs to the [ipn.StateStore]. It stores a copy of the
@@ -550,7 +529,7 @@ func (pm *profileManager) setProfilePrefsNoPermCheck(profile ipn.LoginProfileVie
 		return errors.New("cannot set prefs for a non-current in-memory profile")
 	}
 	if isCurrentProfile {
-		return pm.setUnattendedModeAsConfigured()
+		return nil
 	}
 	return nil
 }
@@ -889,20 +868,10 @@ func ReadStartupPrefsForTest(logf logger.Logf, store ipn.StateStore) (ipn.PrefsV
 	return pm.CurrentPrefs(), nil
 }
 
-// newProfileManager creates a new [profileManager] using the provided [ipn.StateStore].
-// It also loads the list of known profiles from the store.
-func newProfileManager(store ipn.StateStore, logf logger.Logf, health *health.Tracker) (*profileManager, error) {
-	return newProfileManagerWithGOOS(store, logf, health, envknob.GOOS())
-}
 
-func readAutoStartKey(store ipn.StateStore, goos string) (ipn.StateKey, error) {
-	startKey := ipn.CurrentProfileStateKey
-	if goos == "windows" {
-		// When tailscaled runs on Windows it is not typically run unattended.
-		// So we can't use the profile mechanism to load the profile at startup.
-		startKey = ipn.ServerModeStartKey
-	}
-	autoStartKey, err := store.ReadState(startKey)
+
+func readAutoStartKey(store ipn.StateStore) (ipn.StateKey, error) {
+	autoStartKey, err := store.ReadState(ipn.CurrentProfileStateKey)
 	if err != nil && err != ipn.ErrStateNotExist {
 		return "", fmt.Errorf("calling ReadState on state store: %w", err)
 	}
@@ -925,9 +894,9 @@ func readKnownProfiles(store ipn.StateStore) (map[ipn.ProfileID]ipn.LoginProfile
 	return knownProfiles, nil
 }
 
-func newProfileManagerWithGOOS(store ipn.StateStore, logf logger.Logf, ht *health.Tracker, goos string) (*profileManager, error) {
+func newProfileManager(store ipn.StateStore, logf logger.Logf, ht *health.Tracker) (*profileManager, error) {
 	logf = logger.WithPrefix(logf, "pm: ")
-	stateKey, err := readAutoStartKey(store, goos)
+	stateKey, err := readAutoStartKey(store)
 	if err != nil {
 		return nil, err
 	}
@@ -940,7 +909,6 @@ func newProfileManagerWithGOOS(store ipn.StateStore, logf logger.Logf, ht *healt
 	metricProfileCount.Set(int64(len(knownProfiles)))
 
 	pm := &profileManager{
-		goos:                           goos,
 		store:                          store,
 		knownProfiles:                  knownProfiles,
 		logf:                           logf,
@@ -951,15 +919,7 @@ func newProfileManagerWithGOOS(store ipn.StateStore, logf logger.Logf, ht *healt
 	var initialProfile ipn.LoginProfileView
 	if stateKey != "" {
 		initialProfile = pm.findProfileByKey("", stateKey)
-		// Most platform behavior is controlled by the goos parameter, however
-		// some behavior is implied by build tag and fails when run on Windows,
-		// so we explicitly avoid that behavior when running on Windows.
-		// Specifically this reaches down into legacy preference loading that is
-		// specialized by profiles_windows.go and fails in tests on an invalid
-		// uid passed in from the unix tests. The uid's used for Windows tests
-		// and runtime must be valid Windows security identifier structures.
-	} else if len(knownProfiles) == 0 && goos != "windows" && runtime.GOOS != "windows" {
-		// No known profiles, try a migration.
+	} else if len(knownProfiles) == 0 {
 		pm.dlogf("no known profiles; trying to migrate from legacy prefs")
 		if initialProfile, err = pm.migrateFromLegacyPrefs(pm.currentUserID); err != nil {
 

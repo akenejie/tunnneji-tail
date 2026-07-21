@@ -51,23 +51,6 @@ func LookupByUsername(username string) (*user.User, error) {
 type lookupStd func(string) (*user.User, error)
 
 func lookup(usernameOrUID string, std lookupStd, wantShell bool) (*user.User, string, error) {
-	// Skip getent entirely on Non-Unix platforms that won't ever have it.
-	// (Using HasPrefix for "wasip1", anticipating that WASI support will
-	// move beyond "preview 1" some day.)
-	if runtime.GOOS == "windows" || runtime.GOOS == "js" || runtime.GOARCH == "wasm" || runtime.GOOS == "plan9" {
-		var shell string
-		if wantShell && runtime.GOOS == "plan9" {
-			shell = "/bin/rc"
-		}
-		if runtime.GOOS == "plan9" {
-			if u, err := user.Current(); err == nil {
-				return u, shell, nil
-			}
-		}
-		u, err := std(usernameOrUID)
-		return u, shell, err
-	}
-
 	// No getent on Gokrazy. So hard-code the login shell.
 	if distro.Get() == distro.Gokrazy {
 		var shell string
@@ -85,16 +68,6 @@ func lookup(usernameOrUID string, std lookupStd, wantShell bool) (*user.User, st
 			}, shell, nil
 		}
 		return u, shell, nil
-	}
-
-	if runtime.GOOS == "plan9" {
-		return &user.User{
-			Uid:      "0",
-			Gid:      "0",
-			Username: "glenda",
-			Name:     "Glenda",
-			HomeDir:  "/",
-		}, "/bin/rc", nil
 	}
 
 	// Start with getent if caller wants to get the user shell.

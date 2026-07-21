@@ -31,10 +31,6 @@ func GetConnIdentity(logf logger.Logf, c net.Conn) (ci *ConnIdentity, err error)
 		// attempted to connect at the Anonymous impersonation level.
 		return nil, fmt.Errorf("authentication failed: %w", err)
 	}
-	ci.pid, err = wcc.ClientPID()
-	if err != nil {
-		return nil, err
-	}
 	return ci, nil
 }
 

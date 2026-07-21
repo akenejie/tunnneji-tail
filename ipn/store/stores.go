@@ -13,7 +13,6 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -62,18 +61,12 @@ func New(logf logger.Logf, path string) (ipn.StateStore, error) {
 			// We can't strip the prefix here as some NewStoreFunc (like arn:)
 			// expect the prefix.
 			if prefix == TPMPrefix {
-				if runtime.GOOS == "windows" {
-					path = TPMPrefix + TryWindowsAppDataMigration(logf, strings.TrimPrefix(path, TPMPrefix))
-				}
 				if err := maybeMigrateLocalStateFile(logf, path); err != nil {
 					return nil, fmt.Errorf("failed to migrate existing state file to TPM-sealed format: %w", err)
 				}
 			}
 			return sf(logf, path)
 		}
-	}
-	if runtime.GOOS == "windows" {
-		path = TryWindowsAppDataMigration(logf, path)
 	}
 	if err := maybeMigrateLocalStateFile(logf, path); err != nil {
 		return nil, fmt.Errorf("failed to migrate existing TPM-sealed state file to plaintext format: %w", err)
@@ -117,28 +110,6 @@ func HasKnownProviderPrefix(path string) bool {
 		}
 	}
 	return false
-}
-
-// TryWindowsAppDataMigration attempts to copy the Windows state file
-// from its old location to the new location. (Issue 2856)
-//
-// Tailscale 1.14 and before stored state under %LocalAppData%
-// (usually "C:\WINDOWS\system32\config\systemprofile\AppData\Local"
-// when tailscaled.exe is running as a non-user system service).
-// However it is frequently cleared for almost any reason: Windows
-// updates, System Restore, even various System Cleaner utilities.
-//
-// Returns a string of the path to use for the state file.
-// This will be a fallback %LocalAppData% path if migration fails,
-// a %ProgramData% path otherwise.
-func TryWindowsAppDataMigration(logf logger.Logf, path string) string {
-	if path != paths.DefaultTailscaledStateFile() {
-		// If they're specifying a non-default path, just trust that they know
-		// what they are doing.
-		return path
-	}
-	oldFile := paths.LegacyStateFilePath()
-	return paths.TryConfigFileMigration(logf, oldFile, path)
 }
 
 // FileStore is a StateStore that uses a JSON file for persistence.

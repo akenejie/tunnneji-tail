@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/netip"
 	"net/url"
-	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -771,9 +770,6 @@ func ExpandProxyTargetValue(target string, supportedSchemes []string, defaultSch
 	if strings.HasPrefix(target, "unix:") {
 		if !slices.Contains(supportedSchemes, "unix") {
 			return "", fmt.Errorf("unix sockets are not supported for this target type")
-		}
-		if runtime.GOOS == "windows" {
-			return "", fmt.Errorf("unix socket serve target is not supported on Windows")
 		}
 		path := strings.TrimPrefix(target, "unix:")
 		if path == "" {

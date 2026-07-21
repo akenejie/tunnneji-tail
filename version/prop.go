@@ -177,22 +177,9 @@ func IsAppleTV() bool {
 	})
 }
 
-var isWindowsGUI lazy.SyncValue[bool]
-
 // IsWindowsGUI reports whether the current process is the Windows GUI.
 func IsWindowsGUI() bool {
-	if runtime.GOOS != "windows" {
-		return false
-	}
-	return isWindowsGUI.Get(func() bool {
-		exe, err := os.Executable()
-		if err != nil {
-			return false
-		}
-		// It is okay to use GOARCH here because we're checking whether our
-		// _own_ process is the GUI.
-		return isGUIExeName(exe, runtime.GOARCH)
-	})
+	return false
 }
 
 var isUnstableBuild lazy.SyncValue[bool]

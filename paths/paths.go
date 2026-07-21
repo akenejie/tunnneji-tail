@@ -22,9 +22,6 @@ var AppSharedDir syncs.AtomicValue[string]
 // DefaultTailscaledSocket returns the path to the tailscaled Unix socket
 // or the empty string if there's no reasonable default.
 func DefaultTailscaledSocket() string {
-	if runtime.GOOS == "windows" {
-		return `\\.\pipe\ProtectedPrefix\Administrators\Tailscale\tailscaled`
-	}
 	if runtime.GOOS == "darwin" {
 		return "/var/run/tailscaled.socket"
 	}
@@ -64,9 +61,6 @@ var (
 func DefaultTailscaledStateFile() string {
 	if f := stateFileFunc; f != nil {
 		return f()
-	}
-	if runtime.GOOS == "windows" {
-		return filepath.Join(os.Getenv("ProgramData"), "Tailscale", "server-state.conf")
 	}
 	return ""
 }
@@ -110,15 +104,4 @@ func MkStateDir(dirPath string) error {
 		return err
 	}
 	return ensureStateDirPerms(dirPath)
-}
-
-// LegacyStateFilePath returns the legacy path to the state file when
-// it was stored under the current user's %LocalAppData%.
-//
-// It is only called on Windows.
-func LegacyStateFilePath() string {
-	if runtime.GOOS == "windows" {
-		return filepath.Join(os.Getenv("LocalAppData"), "Tailscale", "server-state.conf")
-	}
-	return ""
 }

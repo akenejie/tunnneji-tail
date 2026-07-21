@@ -56,35 +56,9 @@ type peerAPIServer struct {
 }
 
 func (s *peerAPIServer) listen(ip netip.Addr, tunIfIndex int) (ln net.Listener, err error) {
-	// Android for whatever reason often has problems creating the peerapi listener.
-	// But since we started intercepting it with netstack, it's not even important that
-	// we have a real kernel-level listener. So just create a dummy listener on Android
-	// and let netstack intercept it.
-	if runtime.GOOS == "android" {
-		return newFakePeerAPIListener(ip), nil
-	}
-
 	ipStr := ip.String()
 
 	var lc net.ListenConfig
-	if initListenConfig != nil {
-		// On iOS/macOS, this sets the lc.Control hook to
-		// setsockopt the interface index to bind to, to get
-		// out of the network sandbox.
-
-		// A zero tunIfIndex is invalid for peerapi.  A zero value will not get us
-		// out of the network sandbox.  Caller should log and retry.
-		if tunIfIndex == 0 {
-			return nil, fmt.Errorf("peerapi: cannot listen on %s with tunIfIndex 0", ipStr)
-		}
-
-		if err := initListenConfig(&lc, ip, tunIfIndex); err != nil {
-			return nil, err
-		}
-		if runtime.GOOS == "darwin" || runtime.GOOS == "ios" {
-			ipStr = ""
-		}
-	}
 
 	if s.b.sys.IsNetstack() {
 		ipStr = ""
@@ -117,7 +91,7 @@ func (s *peerAPIServer) listen(ip netip.Addr, tunIfIndex int) (ln net.Listener, 
 	ln, err = lc.Listen(context.Background(), tcp4or6, net.JoinHostPort(ipStr, "0"))
 
 	// And if we're on a platform with netstack (anything but iOS), then just fallback to netstack.
-	if err != nil && runtime.GOOS != "ios" {
+	if err != nil {
 		s.b.logf("peerapi: failed to do peerAPI listen, harmless (netstack available) but error was: %v", err)
 		return newFakePeerAPIListener(ip), nil
 	}

@@ -10,7 +10,6 @@ import (
 	"bytes"
 	"io"
 	"os"
-	"os/exec"
 	"runtime"
 	"runtime/debug"
 	"strings"
@@ -227,9 +226,6 @@ func FirewallMode() string {
 }
 
 func desktop() (ret opt.Bool) {
-	if runtime.GOOS != "linux" {
-		return opt.Bool("")
-	}
 	if v := desktopAtomic.Load(); v != nil {
 		v, _ := v.(opt.Bool)
 		return v
@@ -288,9 +284,6 @@ func getEnvType() EnvType {
 // there's no foolproof way to detect this, but the build tag should catch all
 // official builds from 1.78.0.
 func inContainer() opt.Bool {
-	if runtime.GOOS != "linux" {
-		return ""
-	}
 	var ret opt.Bool
 	ret.Set(false)
 	if packageType != nil && packageType() == "container" {
@@ -434,9 +427,6 @@ var etcAptSrcCache atomic.Value // of etcAptSrcResult
 //
 // See https://github.com/tailscale/tailscale/issues/3177
 func DisabledEtcAptSource() bool {
-	if runtime.GOOS != "linux" {
-		return false
-	}
 	const path = "/etc/apt/sources.list.d/tailscale.list"
 	fi, err := os.Stat(path)
 	if err != nil || !fi.Mode().IsRegular() {
@@ -473,18 +463,9 @@ func etcAptSourceFileIsDisabled(r io.Reader) bool {
 	return disabled
 }
 
-// IsSELinuxEnforcing reports whether SELinux is in "Enforcing" mode.
-func IsSELinuxEnforcing() bool {
-	if runtime.GOOS != "linux" {
-		return false
-	}
-	out, _ := exec.Command("getenforce").Output()
-	return string(bytes.TrimSpace(out)) == "Enforcing"
-}
-
 // IsNATLabGuestVM reports whether the current host is a NAT Lab guest VM.
 func IsNATLabGuestVM() bool {
-	if runtime.GOOS == "linux" && distro.Get() == distro.Gokrazy {
+	if distro.Get() == distro.Gokrazy {
 		cmdLine, _ := os.ReadFile("/proc/cmdline")
 		return bytes.Contains(cmdLine, []byte("tailscale-tta=1"))
 	}

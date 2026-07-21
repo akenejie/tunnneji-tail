@@ -21,14 +21,8 @@ import (
 // using os.Executable. If os.Executable fails (it shouldn't), then
 // "cmd" is returned.
 func CmdName() string {
-	// On non-Windows, the modinfo embedded in the running binary is
-	// authoritative and avoids re-reading the executable from disk.
-	// Windows needs the executable-name-based GUI override in cmdName,
-	// so it still takes the slower path.
-	if runtime.GOOS != "windows" {
-		if info, ok := debug.ReadBuildInfo(); ok && info.Path != "" {
-			return path.Base(info.Path)
-		}
+	if info, ok := debug.ReadBuildInfo(); ok && info.Path != "" {
+		return path.Base(info.Path)
 	}
 	e, err := os.Executable()
 	if err != nil {
@@ -54,12 +48,6 @@ func cmdName(exe string) string {
 			ret = path.Base(goPkg) // goPkg is always forward slashes; use path, not filepath
 			break
 		}
-	}
-	if runtime.GOOS == "windows" && strings.HasPrefix(ret, "gui") && checkPreppedExeNameForGUI(fallbackName) {
-		// The GUI binary for internal build system packaging reasons
-		// has a path of "tailscale.io/win/gui".
-		// Ignore that name and use fallbackName instead.
-		return fallbackName
 	}
 	if ret == "" {
 		return fallbackName

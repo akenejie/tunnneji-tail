@@ -1934,21 +1934,7 @@ func (c *Direct) sendAuditLog(ctx context.Context, auditLog tailcfg.AuditLogRequ
 //
 // The returned *atomic.Bool is nil on non-Apple systems.
 func makeScreenTimeDetectingDialFunc(dial netx.DialFunc) (netx.DialFunc, *atomic.Bool) {
-	switch runtime.GOOS {
-	case "darwin", "ios":
-		// Continue below.
-	default:
-		return dial, nil
-	}
-	ab := new(atomic.Bool)
-	return func(ctx context.Context, network, addr string) (net.Conn, error) {
-		c, err := dial(ctx, network, addr)
-		if err != nil {
-			return nil, err
-		}
-		ab.Store(isTCPLoopback(c.LocalAddr()) && isTCPLoopback(c.RemoteAddr()))
-		return c, nil
-	}, ab
+	return dial, nil
 }
 
 func ignoreDialPlan() bool {

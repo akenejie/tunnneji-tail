@@ -15,11 +15,3 @@ func prepExeNameForCmp(exe, arch string) string {
 	archSuffix := "-" + arch
 	return strings.TrimSuffix(baseNoExt, archSuffix)
 }
-
-func checkPreppedExeNameForGUI(preppedExeName string) bool {
-	return preppedExeName == "tailscale-ipn" || preppedExeName == "tailscale-gui"
-}
-
-func isGUIExeName(exe, arch string) bool {
-	return checkPreppedExeNameForGUI(prepExeNameForCmp(exe, arch))
-}

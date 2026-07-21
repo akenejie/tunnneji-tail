@@ -32,7 +32,7 @@ import (
 func TestProfileCurrentUserSwitch(t *testing.T) {
 	store := new(mem.Store)
 
-	pm, err := newProfileManagerWithGOOS(store, logger.Discard, health.NewTracker(eventbustest.NewBus(t)), "linux")
+	pm, err := newProfileManager(store, logger.Discard, health.NewTracker(eventbustest.NewBus(t)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +69,7 @@ func TestProfileCurrentUserSwitch(t *testing.T) {
 		t.Fatalf("CurrentPrefs() = %v, want emptyPrefs", pm.CurrentPrefs().Pretty())
 	}
 
-	pm, err = newProfileManagerWithGOOS(store, logger.Discard, health.NewTracker(eventbustest.NewBus(t)), "linux")
+	pm, err = newProfileManager(store, logger.Discard, health.NewTracker(eventbustest.NewBus(t)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestProfileCurrentUserSwitch(t *testing.T) {
 func TestProfileList(t *testing.T) {
 	store := new(mem.Store)
 
-	pm, err := newProfileManagerWithGOOS(store, logger.Discard, health.NewTracker(eventbustest.NewBus(t)), "linux")
+	pm, err := newProfileManager(store, logger.Discard, health.NewTracker(eventbustest.NewBus(t)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +292,7 @@ func TestProfileDupe(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			store := new(mem.Store)
-			pm, err := newProfileManagerWithGOOS(store, logger.Discard, health.NewTracker(eventbustest.NewBus(t)), "linux")
+			pm, err := newProfileManager(store, logger.Discard, health.NewTracker(eventbustest.NewBus(t)))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -325,7 +325,7 @@ func TestProfileDupe(t *testing.T) {
 func TestProfileManagement(t *testing.T) {
 	store := new(mem.Store)
 
-	pm, err := newProfileManagerWithGOOS(store, logger.Discard, health.NewTracker(eventbustest.NewBus(t)), "linux")
+	pm, err := newProfileManager(store, logger.Discard, health.NewTracker(eventbustest.NewBus(t)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -423,7 +423,7 @@ func TestProfileManagement(t *testing.T) {
 	t.Logf("Recreate profile manager from store")
 	// Recreate the profile manager to ensure that it can load the profiles
 	// from the store at startup.
-	pm, err = newProfileManagerWithGOOS(store, logger.Discard, health.NewTracker(eventbustest.NewBus(t)), "linux")
+	pm, err = newProfileManager(store, logger.Discard, health.NewTracker(eventbustest.NewBus(t)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -439,7 +439,7 @@ func TestProfileManagement(t *testing.T) {
 	t.Logf("Recreate profile manager from store after deleting default profile")
 	// Recreate the profile manager to ensure that it can load the profiles
 	// from the store at startup.
-	pm, err = newProfileManagerWithGOOS(store, logger.Discard, health.NewTracker(eventbustest.NewBus(t)), "linux")
+	pm, err = newProfileManager(store, logger.Discard, health.NewTracker(eventbustest.NewBus(t)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -481,7 +481,7 @@ func TestProfileManagement(t *testing.T) {
 			t.Fatal("SetPrefs failed to save auto-update setting")
 		}
 		// Re-load profiles to trigger migration for invalid auto-update value.
-		pm, err = newProfileManagerWithGOOS(store, logger.Discard, health.NewTracker(eventbustest.NewBus(t)), "linux")
+		pm, err = newProfileManager(store, logger.Discard, health.NewTracker(eventbustest.NewBus(t)))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -503,7 +503,7 @@ func TestProfileManagementWindows(t *testing.T) {
 
 	store := new(mem.Store)
 
-	pm, err := newProfileManagerWithGOOS(store, logger.Discard, health.NewTracker(eventbustest.NewBus(t)), "windows")
+	pm, err := newProfileManager(store, logger.Discard, health.NewTracker(eventbustest.NewBus(t)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -572,7 +572,7 @@ func TestProfileManagementWindows(t *testing.T) {
 	t.Logf("Recreate profile manager from store, should reset prefs")
 	// Recreate the profile manager to ensure that it can load the profiles
 	// from the store at startup.
-	pm, err = newProfileManagerWithGOOS(store, logger.Discard, health.NewTracker(eventbustest.NewBus(t)), "windows")
+	pm, err = newProfileManager(store, logger.Discard, health.NewTracker(eventbustest.NewBus(t)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -595,7 +595,7 @@ func TestProfileManagementWindows(t *testing.T) {
 	}
 
 	// Recreate the profile manager to ensure that it starts with test profile.
-	pm, err = newProfileManagerWithGOOS(store, logger.Discard, health.NewTracker(eventbustest.NewBus(t)), "windows")
+	pm, err = newProfileManager(store, logger.Discard, health.NewTracker(eventbustest.NewBus(t)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1098,9 +1098,9 @@ func TestProfileStateChangeCallback(t *testing.T) {
 			t.Parallel()
 
 			store := new(mem.Store)
-			pm, err := newProfileManagerWithGOOS(store, logger.Discard, health.NewTracker(eventbustest.NewBus(t)), "linux")
+			pm, err := newProfileManager(store, logger.Discard, health.NewTracker(eventbustest.NewBus(t)))
 			if err != nil {
-				t.Fatalf("newProfileManagerWithGOOS: %v", err)
+				t.Fatalf("newProfileManager: %v", err)
 			}
 			for _, p := range tt.knownProfiles {
 				pm.writePrefsToStore(p.Key, p.prefs())
@@ -1154,7 +1154,7 @@ func TestProfileStateChangeCallback(t *testing.T) {
 
 func TestProfileBadAttestationKey(t *testing.T) {
 	store := new(mem.Store)
-	pm, err := newProfileManagerWithGOOS(store, t.Logf, health.NewTracker(eventbustest.NewBus(t)), "linux")
+	pm, err := newProfileManager(store, t.Logf, health.NewTracker(eventbustest.NewBus(t)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1192,7 +1192,7 @@ func (k *failingHardwareAttestationKey) UnmarshalJSON([]byte) error {
 func TestDeleteProfileClearsState(t *testing.T) {
 	store := new(mem.Store)
 
-	pm, err := newProfileManagerWithGOOS(store, logger.Discard, health.NewTracker(eventbustest.NewBus(t)), "linux")
+	pm, err := newProfileManager(store, logger.Discard, health.NewTracker(eventbustest.NewBus(t)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1238,7 +1238,7 @@ func TestDeleteProfileClearsState(t *testing.T) {
 // ordered oldest-first so the most recently added one lands at the
 // bottom. Name then DomainName break ties within either group.
 func TestProfileSortOrder(t *testing.T) {
-	pm, err := newProfileManagerWithGOOS(new(mem.Store), logger.Discard, health.NewTracker(eventbustest.NewBus(t)), "linux")
+	pm, err := newProfileManager(new(mem.Store), logger.Discard, health.NewTracker(eventbustest.NewBus(t)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1297,7 +1297,7 @@ func profileNames(ps []ipn.LoginProfileView) []string {
 // from the injected clock, and is preserved across an update even when the
 // clock advances.
 func TestProfileCreatedStamped(t *testing.T) {
-	pm, err := newProfileManagerWithGOOS(new(mem.Store), logger.Discard, health.NewTracker(eventbustest.NewBus(t)), "linux")
+	pm, err := newProfileManager(new(mem.Store), logger.Discard, health.NewTracker(eventbustest.NewBus(t)))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"path"
 	"reflect"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -63,7 +62,7 @@ func init() {
 		RegisterC2N("/debug/netmap", handleC2NDebugNetMap)
 		RegisterC2N("/debug/health", handleC2NDebugHealth)
 	}
-	if runtime.GOOS == "linux" && buildfeatures.HasOSRouter {
+	if buildfeatures.HasOSRouter {
 		RegisterC2N("POST /netfilter-kind", handleC2NSetNetfilterKind)
 	}
 }

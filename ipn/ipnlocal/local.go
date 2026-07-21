@@ -23,7 +23,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -65,7 +64,6 @@ import (
 	"tailscale.com/net/traffic"
 	"tailscale.com/net/tsaddr"
 	"tailscale.com/net/tsdial"
-	"tailscale.com/paths"
 	"tailscale.com/syncs"
 	"tailscale.com/tailcfg"
 	"tailscale.com/tsd"
@@ -518,11 +516,7 @@ func NewLocalBackend(logf logger.Logf, logID logid.PublicID, sys *tsd.System, lo
 	}
 	mConn := sys.MagicSock.Get()
 
-	goos := envknob.GOOS()
-	if loginFlags&controlclient.LocalBackendStartKeyOSNeutral != 0 {
-		goos = ""
-	}
-	pm, err := newProfileManagerWithGOOS(store, logf, nil, goos)
+	pm, err := newProfileManager(store, logf, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -3071,7 +3065,7 @@ func (b *LocalBackend) startLocked(opts ipn.Options) error {
 	loggedOut := prefs.LoggedOut()
 
 	serverURL := prefs.ControlURLOrDefault(b.polc)
-	if inServerMode := prefs.ForceDaemon(); inServerMode || runtime.GOOS == "windows" {
+	if inServerMode := prefs.ForceDaemon(); inServerMode {
 		logf("serverMode=%v", inServerMode)
 	}
 	b.applyPrefsToHostinfoLocked(b.hostinfo, prefs)
@@ -3481,10 +3475,10 @@ func internalAndExternalInterfaces() (internal, external []netip.Prefix, err err
 	if err != nil {
 		return nil, nil, err
 	}
-	return internalAndExternalInterfacesFrom(il, runtime.GOOS)
+	return internalAndExternalInterfacesFrom(il)
 }
 
-func internalAndExternalInterfacesFrom(il netmon.InterfaceList, goos string) (internal, external []netip.Prefix, err error) {
+func internalAndExternalInterfacesFrom(il netmon.InterfaceList) (internal, external []netip.Prefix, err error) {
 	// We use an IPSetBuilder here to canonicalize the prefixes
 	// and to remove any duplicate entries.
 	var internalBuilder, externalBuilder netipx.IPSetBuilder
@@ -3498,21 +3492,6 @@ func internalAndExternalInterfacesFrom(il netmon.InterfaceList, goos string) (in
 		if iface.IsLoopback() {
 			internalBuilder.AddPrefix(pfx)
 			return
-		}
-		if goos == "windows" {
-			// Windows Hyper-V prefixes all MAC addresses with 00:15:5d.
-			// https://docs.microsoft.com/en-us/troubleshoot/windows-server/virtualization/default-limit-256-dynamic-mac-addresses
-			//
-			// This includes WSL2 vEthernet.
-			// Importantly: by default WSL2 /etc/resolv.conf points to
-			// a stub resolver running on the host vEthernet IP.
-			// So enabling exit nodes with the default tailnet
-			// configuration breaks WSL2 DNS without this.
-			mac := iface.Interface.HardwareAddr
-			if len(mac) == 6 && mac[0] == 0x00 && mac[1] == 0x15 && mac[2] == 0x5d {
-				internalBuilder.AddPrefix(pfx)
-				return
-			}
 		}
 		externalBuilder.AddPrefix(pfx)
 	}); err != nil {
@@ -4818,27 +4797,6 @@ func (b *LocalBackend) resolveBestProfileLocked() (_ ipn.LoginProfileView, isBac
 		return profile, false
 	}
 
-	// Otherwise, if on Windows, use the background profile if one is set.
-	// This includes staying on the current profile if Unattended Mode is enabled
-	// or if AlwaysOn mode is enabled and the current user is still signed in.
-	// If the returned background profileID is "", Tailscale will disconnect
-	// and remain idle until a GUI or CLI client connects.
-	if goos := envknob.GOOS(); goos == "windows" {
-		// If Unattended Mode is enabled for the current profile, keep using it.
-		if b.pm.CurrentPrefs().ForceDaemon() {
-			return b.pm.CurrentProfile(), true
-		}
-		// Otherwise, use the profile returned by the extension.
-		profile := b.extHost.DetermineBackgroundProfile(b.pm)
-		return profile, true
-	}
-
-	// On other platforms, however, Tailscale continues to run in the background
-	// using the current profile.
-	//
-	// TODO(nickkhyl): check if the current profile is allowed on the device,
-	// such as when [pkey.Tailnet] policy setting requires a specific Tailnet.
-	// See tailscale/corp#26249.
 	return b.pm.CurrentProfile(), false
 }
 
@@ -4895,9 +4853,6 @@ func (b *LocalBackend) checkSSHPrefsLocked(p *ipn.Prefs) error {
 	}
 	if err := featureknob.CanRunTailscaleSSH(); err != nil {
 		return err
-	}
-	if runtime.GOOS == "linux" {
-		b.updateSELinuxHealthWarning()
 	}
 	if envknob.SSHIgnoreTailnetPolicy() || envknob.SSHPolicyFile() != "" {
 		return nil
@@ -5559,15 +5514,10 @@ func (b *LocalBackend) peerAPIServicesLocked() (ret []tailcfg.Service) {
 			Port:  uint16(pln.port),
 		})
 	}
-	switch runtime.GOOS {
-	case "linux", "freebsd", "openbsd", "illumos", "solaris", "darwin", "windows", "android", "ios":
-		// These are the platforms currently supported by
-		// net/dns/resolver/tsdns.go:Resolver.HandleExitNodeDNSQuery.
-		ret = append(ret, tailcfg.Service{
-			Proto: tailcfg.PeerAPIDNS,
-			Port:  1, // version
-		})
-	}
+	ret = append(ret, tailcfg.Service{
+		Proto: tailcfg.PeerAPIDNS,
+		Port:  1, // version
+	})
 	return ret
 }
 
@@ -6125,13 +6075,8 @@ func (b *LocalBackend) TailscaleVarRoot() string {
 	if b.varRoot != "" {
 		return b.varRoot
 	}
-	switch runtime.GOOS {
-	case "ios", "android", "darwin":
-		return paths.AppSharedDir.Load()
-	case "linux":
-		if distro.Get() == distro.Gokrazy {
-			return "/perm/tailscaled"
-		}
+	if distro.Get() == distro.Gokrazy {
+		return "/perm/tailscaled"
 	}
 	return ""
 }
@@ -6209,7 +6154,7 @@ func (b *LocalBackend) closePeerAPIListenersLocked() {
 //
 // On Windows, see Issue 1620.
 // On Android, see Issue 1960.
-const peerAPIListenAsync = runtime.GOOS == "windows" || runtime.GOOS == "android"
+const peerAPIListenAsync = false
 
 func (b *LocalBackend) initPeerAPIListener() {
 	b.mu.Lock()
@@ -6471,22 +6416,15 @@ func (b *LocalBackend) routerConfigLocked(cfg *wgcfg.Config, prefs ipn.PrefsView
 		if err != nil {
 			b.logf("failed to discover interface ips: %v", err)
 		}
-		switch runtime.GOOS {
-		case "linux", "windows", "darwin", "ios", "android", "openbsd":
-			rs.LocalRoutes = internalIPs // unconditionally allow access to guest VM networks
-			if prefs.ExitNodeAllowLANAccess() {
-				rs.LocalRoutes = append(rs.LocalRoutes, externalIPs...)
-			} else {
-				// Explicitly add routes to the local network so that we do not
-				// leak any traffic.
-				rs.Routes = append(rs.Routes, externalIPs...)
-			}
-			b.logf("allowing exit node access to local IPs: %v", rs.LocalRoutes)
-		default:
-			if prefs.ExitNodeAllowLANAccess() {
-				b.logf("warning: ExitNodeAllowLANAccess has no effect on " + runtime.GOOS)
-			}
+		rs.LocalRoutes = internalIPs // unconditionally allow access to guest VM networks
+		if prefs.ExitNodeAllowLANAccess() {
+			rs.LocalRoutes = append(rs.LocalRoutes, externalIPs...)
+		} else {
+			// Explicitly add routes to the local network so that we do not
+			// leak any traffic.
+			rs.Routes = append(rs.Routes, externalIPs...)
 		}
+		b.logf("allowing exit node access to local IPs: %v", rs.LocalRoutes)
 	}
 
 	// Get the VIPs for VIP services this node hosts. We will add all locally served VIPs to routes then
@@ -7223,7 +7161,7 @@ func (b *LocalBackend) setNetMapLocked(nm *netmap.NetworkMap) {
 		b.health.SetControlHealth(nil)
 	}
 
-	if runtime.GOOS == "linux" && buildfeatures.HasOSRouter {
+	if buildfeatures.HasOSRouter {
 		if nm.HasCap(tailcfg.NodeAttrLinuxMustUseIPTables) {
 			b.capForcedNetfilter = "iptables"
 		} else if nm.HasCap(tailcfg.NodeAttrLinuxMustUseNfTables) {
@@ -7251,9 +7189,6 @@ func (b *LocalBackend) setNetMapLocked(nm *netmap.NetworkMap) {
 
 	// See the netns package for documentation on what these capability do.
 	netns.SetBindToInterfaceByRoute(b.logf, nm.HasCap(tailcfg.CapabilityBindToInterfaceByRoute))
-	if runtime.GOOS == "android" {
-		netns.SetDisableAndroidBindToActiveNetwork(b.logf, nm.HasCap(tailcfg.NodeAttrDisableAndroidBindToActiveNetwork))
-	}
 	netns.SetDisableBindConnToInterface(b.logf, nm.HasCap(tailcfg.CapabilityDebugDisableBindConnToInterface))
 	netns.SetDisableBindConnToInterfaceAppleExt(b.logf, nm.HasCap(tailcfg.CapabilityDebugDisableBindConnToInterfaceAppleExt))
 
@@ -7993,9 +7928,8 @@ var _ wgengine.NetLogSource = netLogNodeSource{}
 // tunnneji-tail: stubs for functions referenced but not needed.
 
 func (b *LocalBackend) HandleQuad100Port80Conn(c net.Conn) error { return nil }
-func (b *LocalBackend) updateWarnSync(prefs ipn.PrefsView)      {}
+func (b *LocalBackend) updateWarnSync(prefs ipn.PrefsView)        {}
 func (b *LocalBackend) updateNoSNATExitNodeWarning(prefs ipn.PrefsView) {}
-func (b *LocalBackend) updateSELinuxHealthWarning()              {}
 
 // in [NewLocalBackend] so that [wglog.Logger] can rewrite peer references
 // in wireguard-go log lines without any per-Reconfig denormalization.
@@ -8948,23 +8882,6 @@ var (
 )
 
 func (b *LocalBackend) stateEncrypted() opt.Bool {
-	switch runtime.GOOS {
-	case "android", "ios":
-		return opt.NewBool(true)
-	case "darwin":
-		switch {
-		case version.IsMacAppStore():
-			return opt.NewBool(true)
-		case version.IsMacSysExt():
-			sp, _ := b.polc.GetBoolean(pkey.EncryptState, true)
-			return opt.NewBool(sp)
-		default:
-			// Probably self-compiled tailscaled, we don't use the Keychain
-			// there.
-			return opt.NewBool(false)
-		}
-	default:
-		_, ok := b.store.(ipn.EncryptedStateStore)
-		return opt.NewBool(ok)
-	}
+	_, ok := b.store.(ipn.EncryptedStateStore)
+	return opt.NewBool(ok)
 }

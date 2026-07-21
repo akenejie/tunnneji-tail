@@ -45,8 +45,7 @@ func isProblematicInterface(nif *net.Interface) bool {
 	// "WireGuard tunnel 0" as well on Windows (NetBird), but the name seems too
 	// generic where there is not a platform standard (on Linux wt0 is at least
 	// explicitly different from the WireGuard conventional default of wg0).
-	if strings.HasPrefix(name, "zt") || name == "wt0" /* NetBird */ ||
-		(runtime.GOOS == "windows" && strings.Contains(name, "ZeroTier")) {
+	if strings.HasPrefix(name, "zt") || name == "wt0" /* NetBird */ {
 		return true
 	}
 	return false

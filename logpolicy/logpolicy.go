@@ -35,7 +35,6 @@ import (
 	"tailscale.com/feature/buildfeatures"
 	"tailscale.com/health"
 	"tailscale.com/hostinfo"
-	"tailscale.com/log/filelogger"
 	"tailscale.com/logtail"
 	"tailscale.com/logtail/filch"
 	"tailscale.com/net/dnscache"
@@ -533,7 +532,7 @@ func (opts Options) init(disableLogging bool) (*logtail.Config, *Policy) {
 		awaitGokrazyNetwork()
 	}
 	var lflags int
-	if term.IsTerminal(2) || runtime.GOOS == "windows" {
+	if term.IsTerminal(2) {
 		lflags = 0
 	} else {
 		lflags = log.LstdFlags
@@ -568,47 +567,6 @@ func (opts Options) init(disableLogging bool) (*logtail.Config, *Policy) {
 	tryFixLogStateLocation(opts.Dir, opts.CmdName, opts.Logf)
 
 	cfgPath := filepath.Join(opts.Dir, fmt.Sprintf("%s.log.conf", opts.CmdName))
-
-	if runtime.GOOS == "windows" {
-		switch opts.CmdName {
-		case "tailscaled":
-			// Tailscale 1.14 and before stored state under %LocalAppData%
-			// (usually "C:\WINDOWS\system32\config\systemprofile\AppData\Local"
-			// when tailscaled.exe is running as a non-user system service).
-			// However it is frequently cleared for almost any reason: Windows
-			// updates, System Restore, even various System Cleaner utilities.
-			//
-			// The Windows service previously ran as tailscale-ipn.exe, so
-			// machines which ran very old versions might still have their
-			// log conf named %LocalAppData%\tailscale-ipn.log.conf
-			//
-			// Machines which started using Tailscale more recently will have
-			// %LocalAppData%\tailscaled.log.conf
-			//
-			// Attempt to migrate the log conf to C:\ProgramData\Tailscale
-			oldDir := filepath.Join(os.Getenv("LocalAppData"), "Tailscale")
-
-			oldPath := filepath.Join(oldDir, "tailscaled.log.conf")
-			if fi, err := os.Stat(oldPath); err != nil || !fi.Mode().IsRegular() {
-				// *Only* if tailscaled.log.conf does not exist,
-				// check for tailscale-ipn.log.conf
-				oldPathOldCmd := filepath.Join(oldDir, "tailscale-ipn.log.conf")
-				if fi, err := os.Stat(oldPathOldCmd); err == nil && fi.Mode().IsRegular() {
-					oldPath = oldPathOldCmd
-				}
-			}
-
-			cfgPath = paths.TryConfigFileMigration(earlyLogf, oldPath, cfgPath)
-		case "tailscale-ipn":
-			for _, oldBase := range []string{"wg64.log.conf", "wg32.log.conf"} {
-				oldConf := filepath.Join(opts.Dir, oldBase)
-				if fi, err := os.Stat(oldConf); err == nil && fi.Mode().IsRegular() {
-					cfgPath = paths.TryConfigFileMigration(earlyLogf, oldConf, cfgPath)
-					break
-				}
-			}
-		}
-	}
 
 	newc, err := ConfigFromFile(cfgPath)
 	if err != nil {
@@ -671,15 +629,6 @@ func (opts Options) init(disableLogging bool) (*logtail.Config, *Policy) {
 	lw := logtail.NewLogger(conf, opts.Logf)
 
 	var logOutput io.Writer = lw
-
-	if runtime.GOOS == "windows" && conf.Collection == logtail.CollectionNode {
-		logID := newc.PublicID.String()
-		exe, _ := os.Executable()
-		if strings.EqualFold(filepath.Base(exe), "tailscaled.exe") {
-			diskLogf := filelogger.New("tailscale-service", logID, lw.Logf)
-			logOutput = logger.FuncWriter(diskLogf)
-		}
-	}
 
 	if useStdLogger {
 		log.SetFlags(0) // other log flags are set on console, not here

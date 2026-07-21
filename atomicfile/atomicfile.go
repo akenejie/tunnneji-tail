@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 )
 
 // WriteFile writes data to filename+some suffix, then renames it into filename.
@@ -37,10 +36,8 @@ func WriteFile(filename string, data []byte, perm os.FileMode) (err error) {
 	if _, err := f.Write(data); err != nil {
 		return err
 	}
-	if runtime.GOOS != "windows" {
-		if err := f.Chmod(perm); err != nil {
-			return err
-		}
+	if err := f.Chmod(perm); err != nil {
+		return err
 	}
 	if err := f.Sync(); err != nil {
 		return err
