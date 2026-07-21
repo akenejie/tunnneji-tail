@@ -8,7 +8,6 @@ import (
 
 	"github.com/dblohm7/wingoes"
 	"golang.org/x/sys/windows"
-	"golang.org/x/sys/windows/registry"
 )
 
 var _ unsafe.Pointer
@@ -57,8 +56,6 @@ var (
 	procRmRegisterResources              = modrstrtmgr.NewProc("RmRegisterResources")
 	procRmStartSession                   = modrstrtmgr.NewProc("RmStartSession")
 	procExpandEnvironmentStringsForUserW = moduserenv.NewProc("ExpandEnvironmentStringsForUserW")
-	procLoadUserProfileW                 = moduserenv.NewProc("LoadUserProfileW")
-	procUnloadUserProfile                = moduserenv.NewProc("UnloadUserProfile")
 )
 
 func queryServiceConfig2(hService windows.Handle, infoLevel uint32, buf *byte, bufLen uint32, bytesNeeded *uint32) (err error) {
@@ -139,22 +136,6 @@ func rmStartSession(pSession *_RMHANDLE, flags uint32, sessionKey *uint16) (ret 
 
 func expandEnvironmentStringsForUser(token windows.Token, src *uint16, dst *uint16, dstLen uint32) (err error) {
 	r1, _, e1 := syscall.SyscallN(procExpandEnvironmentStringsForUserW.Addr(), uintptr(token), uintptr(unsafe.Pointer(src)), uintptr(unsafe.Pointer(dst)), uintptr(dstLen))
-	if int32(r1) == 0 {
-		err = errnoErr(e1)
-	}
-	return
-}
-
-func loadUserProfile(token windows.Token, profileInfo *_PROFILEINFO) (err error) {
-	r1, _, e1 := syscall.SyscallN(procLoadUserProfileW.Addr(), uintptr(token), uintptr(unsafe.Pointer(profileInfo)))
-	if int32(r1) == 0 {
-		err = errnoErr(e1)
-	}
-	return
-}
-
-func unloadUserProfile(token windows.Token, profile registry.Key) (err error) {
-	r1, _, e1 := syscall.SyscallN(procUnloadUserProfile.Addr(), uintptr(token), uintptr(profile))
 	if int32(r1) == 0 {
 		err = errnoErr(e1)
 	}

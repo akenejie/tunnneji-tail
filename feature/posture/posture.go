@@ -67,40 +67,10 @@ func handleC2NPostureIdentityGet(b *ipnlocal.LocalBackend, w http.ResponseWriter
 
 	res := tailcfg.C2NPostureIdentityResponse{}
 
-	// Only collect posture identity if enabled on the client,
-	// this will first check syspolicy, MDM settings like Registry
-	// on Windows or defaults on macOS. If they are not set, it falls
-	// back to the cli-flag, `--posture-checking`.
-	choice, err := b.PolicyClient().GetPreferenceOption(pkey.PostureChecking, ptype.ShowChoiceByPolicy)
-	if err != nil {
-		e.logf(
-			"c2n: failed to read PostureChecking from syspolicy, returning default from CLI: %s; got error: %s",
-			b.Prefs().PostureChecking(),
-			err,
-		)
-	}
-
-	if choice.ShouldEnable(b.Prefs().PostureChecking()) {
-		res.SerialNumbers, err = posture.GetSerialNumbers(b.PolicyClient(), e.logf)
-		if err != nil {
-			e.logf("c2n: GetSerialNumbers returned error: %v", err)
-			b.HealthTracker().SetUnhealthy(postureSerialWarnable, health.Args{health.ArgError: err.Error()})
-		} else {
-			b.HealthTracker().SetHealthy(postureSerialWarnable)
-		}
-
-		// TODO(tailscale/corp#21371, 2024-07-10): once this has landed in a stable release
-		// and looks good in client metrics, remove this parameter and always report MAC
-		// addresses.
-		if r.FormValue("hwaddrs") == "true" {
-			res.IfaceHardwareAddrs, err = e.getHardwareAddrs()
-			if err != nil {
-				e.logf("c2n: GetHardwareAddrs returned error: %v", err)
-			}
-		}
-	} else {
-		res.PostureDisabled = true
-	}
+	// tunnneji-tail: posture data is never sent to prevent telemetry leakage.
+	// Serial numbers, MAC addresses, and other device-specific information
+	// are personal data that should not be shared with the control server.
+	res.PostureDisabled = true
 
 	e.logf("c2n: posture identity disabled=%v reported %d serials %d hwaddrs", res.PostureDisabled, len(res.SerialNumbers), len(res.IfaceHardwareAddrs))
 

@@ -8,7 +8,6 @@ package ipnlocal
 import (
 	"net"
 	"net/netip"
-	"time"
 
 	"gvisor.dev/gvisor/pkg/tcpip"
 )
@@ -43,16 +42,6 @@ func (b *LocalBackend) TCPHandlerForDst(src, dst netip.AddrPort) (handler func(c
 	// Then handle external connections to the local IP.
 	if !b.isLocalIP(dst.Addr()) {
 		return nil, nil
-	}
-	if dst.Port() == 22 && b.ShouldRunSSH() {
-		// Use a higher keepalive idle time for SSH connections, as they are
-		// typically long lived and idle connections are more likely to be
-		// intentional. Ideally we would turn this off entirely, but we can't
-		// tell the difference between a long lived connection that is idle
-		// vs a connection that is dead because the peer has gone away.
-		// We pick 72h as that is typically sufficient for a long weekend.
-		opts = append(opts, new(tcpip.KeepaliveIdleOption(72*time.Hour)))
-		return b.handleSSHConn, opts
 	}
 	// TODO(will,sonia): allow customizing web client port ?
 	if dst.Port() == webClientPort && b.ShouldExposeRemoteWebClient() {

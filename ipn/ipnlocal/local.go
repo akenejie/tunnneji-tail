@@ -134,32 +134,6 @@ type SSHServer interface {
 	Shutdown()
 }
 
-type newSSHServerFunc func(logger.Logf, *LocalBackend) (SSHServer, error)
-
-var newSSHServer newSSHServerFunc // or nil
-
-// RegisterNewSSHServer lets the conditionally linked ssh/tailssh package register itself.
-func RegisterNewSSHServer(fn newSSHServerFunc) {
-	newSSHServer = fn
-}
-
-// HookListenSSH is set by the ssh/tailssh package (via feature/ssh) to provide
-// an implementation of ListenSSH for use by tsnet.
-var HookListenSSH feature.Hook[func(net.Listener, *LocalBackend, logger.Logf) (net.Listener, error)]
-
-// ListenSSH wraps the given listener with an SSH server that authenticates
-// connections using Tailscale peer identity. The returned listener's Accept
-// yields net.Conn values that are *tailssh.Session.
-//
-// If the ssh/tailssh package has not been linked (e.g. via
-// _ "tailscale.com/feature/ssh"), ListenSSH returns an error.
-func (b *LocalBackend) ListenSSH(ln net.Listener, logf logger.Logf) (net.Listener, error) {
-	fn, ok := HookListenSSH.GetOk()
-	if !ok {
-		return nil, errors.New("SSH support not available; import _ \"tailscale.com/feature/ssh\"")
-	}
-	return fn(ln, b, logf)
-}
 
 // watchSession represents a WatchNotifications channel,
 // an [ipnauth.Actor] that owns it (e.g., a connected GUI/CLI),
@@ -243,7 +217,6 @@ type LocalBackend struct {
 	varRoot                  string         // or empty if SetVarRoot never called
 	logFlushFunc             func()         // or nil if SetLogFlusher wasn't called
 	em                       *expiryManager // non-nil; TODO(nickkhyl): move to nodeBackend
-	sshAtomicBool            atomic.Bool    // TODO(nickkhyl): move to nodeBackend
 	// webClientAtomicBool controls whether the web client is running. This should
 	// be true unless the disable-web-client node attribute has been set.
 	webClientAtomicBool atomic.Bool // TODO(nickkhyl): move to nodeBackend
@@ -318,7 +291,6 @@ type LocalBackend struct {
 	lastFilterInputs *filterInputs
 	httpTestClient   *http.Client       // for controlclient. nil by default, used by tests.
 	ccGen            clientGen          // function for producing controlclient; lazily populated
-	sshServer        SSHServer          // or nil, initialized lazily.
 	appConnector     *appc.AppConnector // or nil, initialized when configured.
 	// notifyCancel cancels notifications to the current SetNotifyCallback.
 	notifyCancel context.CancelFunc
@@ -470,28 +442,11 @@ type LocalBackend struct {
 	// See tailscale/corp#29969.
 	overrideExitNodePolicy bool
 
-	// hardwareAttested is whether backend should use a hardware-backed key to
-	// bind the node identity to this device.
-	hardwareAttested atomic.Bool
-
 	// existsPendingAuthReconfig tracks if a goroutine is waiting to
 	// acquire [LocalBackend]'s mutex inside of [LocalBackend.AuthReconfig].
 	// It is used to prevent goroutines from piling up to do the same
 	// work of [LocalBackend.authReconfigLocked].
 	existsPendingAuthReconfig atomic.Bool
-}
-
-// SetHardwareAttested enables hardware attestation key signatures in map
-// requests, if supported on this platform. SetHardwareAttested should be called
-// before Start.
-func (b *LocalBackend) SetHardwareAttested() {
-	b.hardwareAttested.Store(true)
-}
-
-// HardwareAttested reports whether hardware-backed attestation keys should be
-// used to bind the node's identity to this device.
-func (b *LocalBackend) HardwareAttested() bool {
-	return b.hardwareAttested.Load()
 }
 
 // HealthTracker returns the health tracker for the backend.
@@ -1344,10 +1299,6 @@ func (b *LocalBackend) Shutdown() {
 		b.mu.Lock()
 	}
 	cc := b.cc
-	if b.sshServer != nil {
-		b.sshServer.Shutdown()
-		b.sshServer = nil
-	}
 	b.closePeerAPIListenersLocked()
 	if b.debugSink != nil {
 		b.e.InstallCaptureHook(nil)
@@ -3097,25 +3048,6 @@ func (b *LocalBackend) startLocked(opts ipn.Options) error {
 	// neither UpdatePrefs or reconciliation should change Persist
 	newPrefs.Persist = b.pm.CurrentPrefs().Persist().AsStruct()
 
-	if buildfeatures.HasTPM && b.HardwareAttested() {
-		if genKey, ok := feature.HookGenerateAttestationKeyIfEmpty.GetOk(); ok {
-			newKey, err := genKey(newPrefs.Persist, logf)
-			if err != nil {
-				logf("failed to populate attestation key from TPM: %v", err)
-			}
-			if newKey {
-				prefsChanged = true
-				prefsChangedWhy = append(prefsChangedWhy, "newKey")
-			}
-		}
-	}
-	// Remove any existing attestation key if HardwareAttested is false.
-	if !b.HardwareAttested() && newPrefs.Persist != nil && newPrefs.Persist.AttestationKey != nil && !newPrefs.Persist.AttestationKey.IsZero() {
-		newPrefs.Persist.AttestationKey = nil
-		prefsChanged = true
-		prefsChangedWhy = append(prefsChangedWhy, "removeAttestationKey")
-	}
-
 	if prefsChanged {
 		logf("updated prefs: %v, reason: %v", newPrefs.Pretty(), prefsChangedWhy)
 		if err := b.pm.SetPrefs(newPrefs.View(), cn.NetworkProfile()); err != nil {
@@ -3339,8 +3271,7 @@ func (b *LocalBackend) updateFilterLocked(prefs ipn.PrefsView) {
 	// TODO(nickkhyl) split this into two functions:
 	// - (*nodeBackend).RebuildFilters() (normalFilter, jailedFilter *filter.Filter, changed bool),
 	//   which would return packet filters for the current state and whether they changed since the last call.
-	// - (*LocalBackend).updateFilters(), which would use the above to update the engine with the new filters,
-	//    notify b.sshServer, etc.
+	// - (*LocalBackend).updateFilters(), which would use the above to update the engine with the new filters.
 	//
 	// For this, we would need to plumb a few more things into the [nodeBackend]. Most importantly,
 	// the current [ipn.PrefsView]), but also maybe also a b.logf and a b.health?
@@ -3468,10 +3399,6 @@ func (b *LocalBackend) updateFilterLocked(prefs ipn.PrefsView) {
 	// The filter for a jailed node is the exact same as a ShieldsUp filter.
 	oldJailedFilter := b.e.GetJailedFilter()
 	b.e.SetJailedFilter(filter.NewShieldsUpFilter(localNets, logNets, oldJailedFilter, b.logf))
-
-	if b.sshServer != nil {
-		b.goTracker.Go(b.sshServer.OnPolicyChange)
-	}
 }
 
 // packetFilterPermitsUnlockedNodes reports any peer in peers with the
@@ -4527,11 +4454,10 @@ func generateInterceptVIPServicesTCPPortFunc(svcAddrPorts map[netip.Addr]func(ui
 	}
 }
 
-// setAtomicValuesFromPrefsLocked populates sshAtomicBool, containsViaIPFuncAtomic,
+// setAtomicValuesFromPrefsLocked populates containsViaIPFuncAtomic,
 // shouldInterceptTCPPortAtomic, and exposeRemoteWebClientAtomicBool from the prefs p,
 // which may be !Valid().
 func (b *LocalBackend) setAtomicValuesFromPrefsLocked(p ipn.PrefsView) {
-	b.sshAtomicBool.Store(p.Valid() && p.RunSSH() && envknob.CanSSHD())
 	b.setExposeRemoteWebClientAtomicBoolLocked(p)
 
 	if !p.Valid() {
@@ -5502,12 +5428,6 @@ func (b *LocalBackend) setPrefsLocked(newp *ipn.Prefs) ipn.PrefsView {
 
 	b.updateFilterLocked(newp.View())
 
-	if buildfeatures.HasSSH && oldp.ShouldSSHBeRunning() && !newp.ShouldSSHBeRunning() {
-		if b.sshServer != nil {
-			b.goTracker.Go(b.sshServer.Shutdown)
-			b.sshServer = nil
-		}
-	}
 	if netMap != nil {
 		selfProfileView, _ := cn.UserByID(netMap.User())
 		newProfile := profileFromView(selfProfileView)
@@ -6649,20 +6569,7 @@ func (b *LocalBackend) applyPrefsToHostinfoLocked(hi *tailcfg.Hostinfo, prefs ip
 		}
 	}
 
-	var sshHostKeys []string
-	if buildfeatures.HasSSH && prefs.RunSSH() && envknob.CanSSHD() {
-		// TODO(bradfitz): this is called with b.mu held. Not ideal.
-		// If the filesystem gets wedged or something we could block for
-		// a long time. But probably fine.
-		if f, ok := feature.HookGetSSHHostKeyPublicStrings.GetOk(); ok {
-			var err error
-			sshHostKeys, err = f(b.TailscaleVarRoot(), b.logf)
-			if err != nil {
-				b.logf("warning: unable to get SSH host keys, SSH will appear as disabled for this node: %v", err)
-			}
-		}
-	}
-	hi.SSH_HostKeys = sshHostKeys
+	hi.SSH_HostKeys = nil
 
 	if buildfeatures.HasRelayServer {
 		hi.PeerRelay = prefs.RelayServerPort().Valid()
@@ -6993,8 +6900,6 @@ func (b *LocalBackend) resetAuthURLLocked() {
 	b.authURLTime = time.Time{}
 	b.authActor = nil
 }
-
-func (b *LocalBackend) ShouldRunSSH() bool { return b.sshAtomicBool.Load() && envknob.CanSSHD() }
 
 // ShouldRunWebClient reports whether the web client is being run
 // within this tailscaled instance. ShouldRunWebClient is safe to
@@ -8085,6 +7990,13 @@ var _ wgengine.NetLogSource = netLogNodeSource{}
 // (e.g. "[IMTBr]") for the peer whose wireguard-go-formatted public key
 // string is wgString (e.g. "peer(IMTB…r7lM)"), or "", false if no current
 // peer matches. It is installed on the engine via [Engine.SetWGPeerLookup]
+// tunnneji-tail: stubs for functions referenced but not needed.
+
+func (b *LocalBackend) HandleQuad100Port80Conn(c net.Conn) error { return nil }
+func (b *LocalBackend) updateWarnSync(prefs ipn.PrefsView)      {}
+func (b *LocalBackend) updateNoSNATExitNodeWarning(prefs ipn.PrefsView) {}
+func (b *LocalBackend) updateSELinuxHealthWarning()              {}
+
 // in [NewLocalBackend] so that [wglog.Logger] can rewrite peer references
 // in wireguard-go log lines without any per-Reconfig denormalization.
 func (b *LocalBackend) lookupPeerWireGuardString(wgString string) (tsString string, ok bool) {
@@ -8098,145 +8010,6 @@ func (b *LocalBackend) lookupPeerWireGuardString(wgString string) (tsString stri
 		return "", false
 	}
 	return nv.Key().ShortString(), true
-}
-
-// ActiveSSHConns returns the number of active SSH connections,
-// or 0 if SSH is not linked into the binary or available on the platform.
-func (b *LocalBackend) ActiveSSHConns() int {
-	if b.sshServer == nil {
-		return 0
-	}
-	return b.sshServer.NumActiveConns()
-}
-
-func (b *LocalBackend) sshServerOrInit() (_ SSHServer, err error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if b.sshServer != nil {
-		return b.sshServer, nil
-	}
-	if newSSHServer == nil {
-		return nil, errors.New("no SSH server support")
-	}
-	b.sshServer, err = newSSHServer(b.logf, b)
-	if err != nil {
-		return nil, fmt.Errorf("newSSHServer: %w", err)
-	}
-	return b.sshServer, nil
-}
-
-var warnSyncDisabled = health.Register(&health.Warnable{
-	Code:     "sync-disabled",
-	Title:    "Tailscale Sync is Disabled",
-	Severity: health.SeverityHigh,
-	Text:     health.StaticMessage("Tailscale control plane syncing is disabled; run `tailscale set --sync` to restore"),
-})
-
-var warnSSHSELinuxWarnable = health.Register(&health.Warnable{
-	Code:     "ssh-unavailable-selinux-enabled",
-	Title:    "Tailscale SSH and SELinux",
-	Severity: health.SeverityLow,
-	Text:     health.StaticMessage("SELinux is enabled; Tailscale SSH may not work. See https://tailscale.com/s/ssh-selinux"),
-})
-
-// warnNoSNATWithExitNode is a warnable for when a node is advertising as an
-// exit node but has SNAT disabled. In this configuration internet-bound traffic
-// from peers using this exit node will not be masqueraded to the node's own
-// source IP, so return packets cannot be routed back, causing the exit node to
-// not work as expected.
-var warnNoSNATWithExitNode = health.Register(&health.Warnable{
-	Code:     "nosnat-with-advertised-exit-node",
-	Title:    "Exit node advertising may not work correctly",
-	Severity: health.SeverityMedium,
-	Text:     health.StaticMessage("snat-subnet-routes is disabled while advertising as an exit node; internet traffic through this exit node may not work as expected"),
-})
-
-func (b *LocalBackend) updateSELinuxHealthWarning() {
-	if hostinfo.IsSELinuxEnforcing() {
-		b.health.SetUnhealthy(warnSSHSELinuxWarnable, nil)
-	} else {
-		b.health.SetHealthy(warnSSHSELinuxWarnable)
-	}
-}
-
-func (b *LocalBackend) updateWarnSync(prefs ipn.PrefsView) {
-	if prefs.Sync().EqualBool(false) {
-		b.health.SetUnhealthy(warnSyncDisabled, nil)
-	} else {
-		b.health.SetHealthy(warnSyncDisabled)
-	}
-}
-
-func (b *LocalBackend) updateNoSNATExitNodeWarning(prefs ipn.PrefsView) {
-	if !buildfeatures.HasAdvertiseExitNode {
-		return
-	}
-	if prefs.NoSNAT() && prefs.AdvertisesExitNode() {
-		b.health.SetUnhealthy(warnNoSNATWithExitNode, nil)
-	} else {
-		b.health.SetHealthy(warnNoSNATWithExitNode)
-	}
-}
-
-func (b *LocalBackend) handleSSHConn(c net.Conn) (err error) {
-	s, err := b.sshServerOrInit()
-	if err != nil {
-		return err
-	}
-	b.updateSELinuxHealthWarning()
-	return s.HandleSSHConn(c)
-}
-
-// HandleQuad100Port80Conn serves http://100.100.100.100/ on port 80 (and
-// the equivalent tsaddr.TailscaleServiceIPv6 address).
-func (b *LocalBackend) HandleQuad100Port80Conn(c net.Conn) error {
-	var s http.Server
-	s.Handler = http.HandlerFunc(b.handleQuad100Port80Conn)
-	return s.Serve(netutil.NewOneConnListener(c, nil))
-}
-
-func validQuad100Host(h string) bool {
-	switch h {
-	case "",
-		tsaddr.TailscaleServiceIPString,
-		tsaddr.TailscaleServiceIPv6String,
-		"[" + tsaddr.TailscaleServiceIPv6String + "]":
-		return true
-	}
-	return false
-}
-
-func (b *LocalBackend) handleQuad100Port80Conn(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("X-Frame-Options", "DENY")
-	w.Header().Set("Content-Security-Policy", "default-src 'self';")
-	if r.Method != "GET" && r.Method != "HEAD" {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if !validQuad100Host(r.Host) {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	io.WriteString(w, "<h1>Tailscale</h1>\n")
-	nm := b.currentNode().NetMap()
-	if nm == nil {
-		io.WriteString(w, "No netmap.\n")
-		return
-	}
-	addrs := nm.GetAddresses()
-	if addrs.Len() == 0 {
-		io.WriteString(w, "No local addresses.\n")
-		return
-	}
-	io.WriteString(w, "<p>Local addresses:</p><ul>\n")
-	for i := range addrs.Len() {
-		fmt.Fprintf(w, "<li>%v</li>\n", addrs.At(i).Addr())
-	}
-	io.WriteString(w, "</ul>\n")
 }
 
 // HookDoctor is an optional hook for the "doctor" problem diagnosis feature.

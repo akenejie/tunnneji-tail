@@ -45,16 +45,8 @@ func init() {
 	feature.HookTPMAvailable.Set(tpmSupportedOnce)
 	feature.HookHardwareAttestationAvailable.Set(tpmSupportedOnce)
 
-	hostinfo.RegisterHostinfoNewHook(func(hi *tailcfg.Hostinfo) {
-		hi.TPM = infoOnce()
-	})
-	store.Register(store.TPMPrefix, newStore)
-	if runtime.GOOS == "linux" || runtime.GOOS == "windows" {
-		key.RegisterHardwareAttestationKeyFns(
-			func() key.HardwareAttestationKey { return &attestationKey{} },
-			func() (key.HardwareAttestationKey, error) { return newAttestationKey() },
-		)
-	}
+	// tunnneji-tail: TPM is completely disabled to prevent telemetry leakage.
+	// TPM store and hardware attestation key registration are removed.
 }
 
 func tpmSupported() bool {

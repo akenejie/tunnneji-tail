@@ -36,25 +36,11 @@ func IsMobile() bool {
 	return runtime.GOOS == "android" || runtime.GOOS == "ios"
 }
 
-// OS returns runtime.GOOS, except instead of returning "darwin" it returns
-// "iOS" or "macOS".
+// OS returns the operating system.
+// tunnneji-tail always returns "linux" to make all platforms
+// indistinguishable from the Tailscale server's perspective.
 func OS() string {
-	// If you're wondering why we have this function that just returns
-	// runtime.GOOS written differently: in the old days, Go reported
-	// GOOS=darwin for both iOS and macOS, so we needed this function to
-	// differentiate them. Then a later Go release added GOOS=ios as a separate
-	// platform, but by then the "iOS" and "macOS" values we'd picked, with that
-	// exact capitalization, were already baked into databases.
-	if IsAppleTV() {
-		return "tvOS"
-	}
-	if runtime.GOOS == "ios" {
-		return "iOS"
-	}
-	if runtime.GOOS == "darwin" {
-		return "macOS"
-	}
-	return runtime.GOOS
+	return "linux"
 }
 
 // IsMacGUIVariant reports whether runtime.GOOS=="darwin" and this one of the

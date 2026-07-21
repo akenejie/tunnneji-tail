@@ -17,7 +17,6 @@ import (
 	"github.com/kortschak/wol"
 	"tailscale.com/envknob"
 	"tailscale.com/feature"
-	"tailscale.com/hostinfo"
 	"tailscale.com/ipn/ipnlocal"
 	"tailscale.com/tailcfg"
 	"tailscale.com/util/clientmetric"
@@ -27,9 +26,8 @@ func init() {
 	feature.Register("wakeonlan")
 	ipnlocal.RegisterC2N("POST /wol", handleC2NWoL)
 	ipnlocal.RegisterPeerAPIHandler("/v0/wol", handlePeerAPIWakeOnLAN)
-	hostinfo.RegisterHostinfoNewHook(func(h *tailcfg.Hostinfo) {
-		h.WoLMACs = getWoLMACs()
-	})
+	// tunnneji-tail: WoLMACs hook is disabled to prevent MAC address leakage.
+	// MAC addresses are device-specific information that should not be sent to the control server.
 }
 
 func handleC2NWoL(b *ipnlocal.LocalBackend, w http.ResponseWriter, r *http.Request) {

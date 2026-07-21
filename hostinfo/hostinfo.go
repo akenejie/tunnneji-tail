@@ -22,7 +22,6 @@ import (
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/lazy"
 	"tailscale.com/types/opt"
-	"tailscale.com/util/dnsname"
 	"tailscale.com/util/lineiter"
 	"tailscale.com/version/distro"
 )
@@ -39,11 +38,9 @@ func RegisterHostinfoNewHook(f func(*tailcfg.Hostinfo)) {
 
 // New returns a partially populated Hostinfo for the current host.
 func New() *tailcfg.Hostinfo {
-	hostname, _ := Hostname()
-	hostname = dnsname.FirstLabel(hostname)
 	hi := &tailcfg.Hostinfo{
 		IPNVersion:      "1.101.0-dev20260712",
-		Hostname:        hostname,
+		Hostname:        "tailscaled",
 		App:             "",
 		OS:              "",
 		OSVersion:       "",
