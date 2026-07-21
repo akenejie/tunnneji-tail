@@ -120,9 +120,6 @@ type Direct struct {
 	streamingMapSession     *mapSession // the one streaming mapSession instance
 
 	controlClientID int64 // Random ID used to differentiate clients for consumers of messages.
-
-	deviceSigningKeyPEM []byte // RSA private key PEM for device signing, from state file
-	deviceCertChainPEM  []byte // X.509 certificate PEM for device identity, from state file
 }
 
 // Observer is implemented by users of the control client (such as LocalBackend)
@@ -188,16 +185,6 @@ type Options struct {
 	// attempted. It is used to allow the client to clean up any resources or complete any
 	// tasks that are dependent on a live client.
 	Shutdown func()
-
-	// DeviceSigningKeyPEM is the RSA private key PEM for device certificate signing,
-	// generated at -K time and stored in the state file. If non-nil, signRegisterRequest
-	// uses this instead of querying the OS certificate store.
-	DeviceSigningKeyPEM []byte
-
-	// DeviceCertChainPEM is the self-signed X.509 certificate PEM for device identity,
-	// generated at -K time and stored in the state file. If non-nil, signRegisterRequest
-	// uses this instead of querying the OS certificate store.
-	DeviceCertChainPEM []byte
 }
 
 // ControlDialPlanner is the interface optionally supplied when creating a
@@ -409,8 +396,6 @@ func NewDirect(opts Options) (*Direct, error) {
 		dialer:            opts.Dialer,
 		dnsCache:          dnsCache,
 		dialPlan:          opts.DialPlan,
-		deviceSigningKeyPEM: opts.DeviceSigningKeyPEM,
-		deviceCertChainPEM:  opts.DeviceCertChainPEM,
 	}
 	c.discoPubKey = opts.DiscoPublicKey
 	c.closedCtx, c.closeCtx = context.WithCancel(context.Background())
@@ -825,7 +810,7 @@ func (c *Direct) doLogin(ctx context.Context, opt loginOpt) (mustRegen bool, new
 			AuthKey: authKey,
 		}
 	}
-	err = signRegisterRequest(c.polc, &request, c.serverURL, c.serverLegacyKey, machinePrivKey.Public(), c.deviceSigningKeyPEM, c.deviceCertChainPEM)
+	err = signRegisterRequest(c.polc, &request, c.serverURL, c.serverLegacyKey, machinePrivKey.Public())
 	if err != nil {
 		// If signing failed, clear all related fields
 		request.SignatureType = tailcfg.SignatureNone

@@ -51,7 +51,7 @@ Usage:
 
 Options:
   -K[n]     <key>       API auth key for VPN group n (required for first run)
-  -T[n]     <path>      State file path (default: ttstate.json)
+  -T[n]     <path>      State file path (default: tailscaled.state)
   -H[n]     <name>      Hostname for VPN group n (default: tailscaled)
   -S[n][s]  <mapping>   Server: listen on VPN port, forward to target
   -C[n][s]  <mapping>   Client: listen on local port, forward to VPN target
@@ -137,7 +137,6 @@ type PortEntry struct {
 	TargetPort int
 	Accept     []netip.Prefix
 	Password   string
-	Sub        string // port group sub identifier ("", "a", "b", ...)
 }
 
 // TunnelGroup represents a single VPN tunnel with multiple port mappings
@@ -298,7 +297,7 @@ func parseTunnelArgs(args []string) ([]TunnelGroup, error) {
 		stateFileSet  bool
 		hostname      string
 		hostnameSet   bool
-		entries       map[string][]rawEntry // sub → port mappings (multiple per group)
+		entries       map[string]rawEntry   // sub → port mapping
 		accepts       map[string]string     // dir+sub → IP list ("S", "SA", "C", "CA")
 		passwords     map[string]string     // dir+sub → password ("", "S", "SA", "C", "CA")
 	}
@@ -308,7 +307,7 @@ func parseTunnelArgs(args []string) ([]TunnelGroup, error) {
 	getGroup := func(n int) *rawGroup {
 		if raw[n] == nil {
 			raw[n] = &rawGroup{
-				entries:   make(map[string][]rawEntry),
+				entries:   make(map[string]rawEntry),
 				accepts:   make(map[string]string),
 				passwords: make(map[string]string),
 			}
@@ -397,7 +396,10 @@ func parseTunnelArgs(args []string) ([]TunnelGroup, error) {
 			}
 			g := getGroup(groupNum)
 			key := flagName + sub // "Sa", "Ca", "S", "C", etc.
-			g.entries[key] = append(g.entries[key], rawEntry{direction: flagName, mapping: args[i]})
+			if _, exists := g.entries[key]; exists {
+				return nil, fmt.Errorf("duplicate -%s%s for group %d", flagName, sub, groupNum)
+			}
+			g.entries[key] = rawEntry{direction: flagName, mapping: args[i]}
 			continue
 		}
 
@@ -559,7 +561,7 @@ func parseTunnelArgs(args []string) ([]TunnelGroup, error) {
 		}
 
 		if rg.stateFile == "" {
-			rg.stateFile = "ttstate.json"
+			rg.stateFile = "tailscaled.state"
 		}
 
 		if len(rg.entries) == 0 {
@@ -611,60 +613,57 @@ func parseTunnelArgs(args []string) ([]TunnelGroup, error) {
 		}
 		usedPorts := make(map[string]portInfo) // key: direction + port number
 
-		for key, entries := range rg.entries {
+		for key, entry := range rg.entries {
 			// key is direction+sub (e.g., "Sa", "Ca", "S", "C")
 			sub := key[1:] // extract sub part after direction char
 
-			for _, entry := range entries {
-				listenPort, addr, targetPort, err := parsePortMapping(entry.mapping)
-				if err != nil {
-					return nil, fmt.Errorf("group %d -%s%s: %v", n, entry.direction, sub, err)
-				}
-
-				portKey := fmt.Sprintf("%s%d", entry.direction, listenPort)
-				if first, ok := usedPorts[portKey]; ok {
-					return nil, fmt.Errorf("group %d: port %d used by both -%s%s and -%s%s", n, listenPort, first.direction, first.sub, entry.direction, sub)
-				}
-				usedPorts[portKey] = portInfo{direction: entry.direction, sub: sub}
-
-				// Resolve hostname to IP for NAT processing
-				addr = resolveHost(addr)
-
-				pe := &PortEntry{
-					IsServer:   entry.direction == "S",
-					ListenPort: listenPort,
-					TargetAddr: addr,
-					TargetPort: targetPort,
-					Sub:        sub,
-				}
-
-				// Accept lookup: direction+sub → direction → sub → global
-				// -A always has direction, so keys are "SA", "S", "CA", "C"
-				dirChar := entry.direction // "S" or "C"
-				acceptKeys := []string{dirChar + sub, dirChar}
-				for _, key := range acceptKeys {
-					if ipStr, ok := rg.accepts[key]; ok {
-						prefixes, err := parseIPList(ipStr)
-						if err != nil {
-							return nil, fmt.Errorf("group %d -A%s: %v", n, key, err)
-						}
-						pe.Accept = prefixes
-						break
-					}
-				}
-
-				// Password lookup: dir+sub → dir → sub → global
-				// Keys: "SA"/"S"/"CA"/"C" for direction-specific, "A"/"sub" for sub-only, "" for global
-				passKeys := []string{dirChar + sub, dirChar, sub, ""}
-				for _, key := range passKeys {
-					if pass, ok := rg.passwords[key]; ok {
-						pe.Password = pass
-						break
-					}
-				}
-
-				g.Ports[fmt.Sprintf("%s%d", entry.direction, listenPort)] = pe
+			listenPort, addr, targetPort, err := parsePortMapping(entry.mapping)
+			if err != nil {
+				return nil, fmt.Errorf("group %d -%s%s: %v", n, entry.direction, sub, err)
 			}
+
+			portKey := fmt.Sprintf("%s%d", entry.direction, listenPort)
+			if first, ok := usedPorts[portKey]; ok {
+				return nil, fmt.Errorf("group %d: port %d used by both -%s%s and -%s%s", n, listenPort, first.direction, first.sub, entry.direction, sub)
+			}
+			usedPorts[portKey] = portInfo{direction: entry.direction, sub: sub}
+
+			// Resolve hostname to IP for NAT processing
+			addr = resolveHost(addr)
+
+			pe := &PortEntry{
+				IsServer:   entry.direction == "S",
+				ListenPort: listenPort,
+				TargetAddr: addr,
+				TargetPort: targetPort,
+			}
+
+			// Accept lookup: direction+sub → direction → sub → global
+			// -A always has direction, so keys are "SA", "S", "CA", "C"
+			dirChar := entry.direction // "S" or "C"
+			acceptKeys := []string{dirChar + sub, dirChar}
+			for _, key := range acceptKeys {
+				if ipStr, ok := rg.accepts[key]; ok {
+					prefixes, err := parseIPList(ipStr)
+					if err != nil {
+						return nil, fmt.Errorf("group %d -A%s: %v", n, key, err)
+					}
+					pe.Accept = prefixes
+					break
+				}
+			}
+
+			// Password lookup: dir+sub → dir → sub → global
+			// Keys: "SA"/"S"/"CA"/"C" for direction-specific, "A"/"sub" for sub-only, "" for global
+			passKeys := []string{dirChar + sub, dirChar, sub, ""}
+			for _, key := range passKeys {
+				if pass, ok := rg.passwords[key]; ok {
+					pe.Password = pass
+					break
+				}
+			}
+
+			g.Ports[entry.direction+sub] = pe
 		}
 
 		// Determine if VPN is untrusted (drop ICMP)

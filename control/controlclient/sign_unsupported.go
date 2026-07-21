@@ -12,8 +12,6 @@ import (
 )
 
 // signRegisterRequest on non-supported platforms always returns errNoCertStore.
-// Device certificate signing is only supported on Windows and macOS with MDM
-// configuration. On Linux, the control server does not accept signed requests.
-func signRegisterRequest(polc policyclient.Client, req *tailcfg.RegisterRequest, serverURL string, serverPubKey, machinePubKey key.MachinePublic, deviceSigningKeyPEM, deviceCertChainPEM []byte) error {
+func signRegisterRequest(polc policyclient.Client, req *tailcfg.RegisterRequest, serverURL string, serverPubKey, machinePubKey key.MachinePublic) error {
 	return errNoCertStore
 }

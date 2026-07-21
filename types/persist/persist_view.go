@@ -103,17 +103,6 @@ func (v PersistView) DisallowedTKAStateIDs() views.Slice[string] {
 	return views.SliceOf(v.ж.DisallowedTKAStateIDs)
 }
 
-func (v PersistView) PostureSerialNumbers() views.Slice[string] {
-	return views.SliceOf(v.ж.PostureSerialNumbers)
-}
-
-func (v PersistView) PostureHardwareAddrs() views.Slice[string] {
-	return views.SliceOf(v.ж.PostureHardwareAddrs)
-}
-
-func (v PersistView) DeviceSigningKeyPEM() views.ByteSlice[[]byte]   { return views.ByteSliceOf(v.ж.DeviceSigningKeyPEM) }
-func (v PersistView) DeviceCertChainPEM() views.ByteSlice[[]byte]    { return views.ByteSliceOf(v.ж.DeviceCertChainPEM) }
-
 // A compilation failure here means this code must be regenerated, with the command at the top of this file.
 var _PersistViewNeedsRegeneration = Persist(struct {
 	_                     structs.Incomparable
@@ -124,8 +113,4 @@ var _PersistViewNeedsRegeneration = Persist(struct {
 	NodeID                tailcfg.StableNodeID
 	AttestationKey        key.HardwareAttestationKey
 	DisallowedTKAStateIDs []string
-	PostureSerialNumbers  []string
-	PostureHardwareAddrs  []string
-	DeviceSigningKeyPEM   []byte
-	DeviceCertChainPEM    []byte
 }{})

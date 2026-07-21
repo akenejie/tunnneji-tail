@@ -60,28 +60,6 @@ const (
 	// has ever been received (even if partially).
 	// Any non-empty value indicates that at least one file has been received.
 	TaildropReceivedKey = StateKey("_taildrop-received")
-
-	// AuthKeyStateKey is the key under which tunnneji-tail stores the
-	// auth key for cross-machine portability. When a state file is copied
-	// to a new machine, this key allows auto-re-registration without
-	// interactive login.
-	AuthKeyStateKey = StateKey("_authkey")
-
-	// PostureSerialNumbersKey stores JSON-encoded []string of random
-	// serial numbers generated at -K time for cross-machine portability.
-	PostureSerialNumbersKey = StateKey("_posture_serials")
-
-	// PostureHardwareAddrsKey stores JSON-encoded []string of random
-	// MAC addresses generated at -K time for cross-machine portability.
-	PostureHardwareAddrsKey = StateKey("_posture_hwaddrs")
-
-	// DeviceSigningKeyPEMKey stores the RSA private key PEM for device
-	// certificate signing, generated at -K time.
-	DeviceSigningKeyPEMKey = StateKey("_device_signing_key")
-
-	// DeviceCertChainPEMKey stores the self-signed X.509 certificate PEM
-	// for device identity, generated at -K time.
-	DeviceCertChainPEMKey = StateKey("_device_cert_chain")
 )
 
 // StateStoreHealth is a Warnable set when store.New fails at startup. If
