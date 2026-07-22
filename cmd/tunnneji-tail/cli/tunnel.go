@@ -40,16 +40,6 @@ func runTunnelCLI(args []string) error {
 		} else {
 			log.Printf("  state: %s", g.StateFile)
 		}
-		for label, pe := range g.Ports {
-			if label == "" {
-				label = "-"
-			}
-			if pe.IsServer {
-				log.Printf("    port %s: VPN %d -> %s:%d", label, pe.ListenPort, pe.TargetAddr, pe.TargetPort)
-			} else {
-				log.Printf("    port %s: local %d -> VPN %s:%d", label, pe.ListenPort, pe.TargetAddr, pe.TargetPort)
-			}
-		}
 	}
 
 	sigCh := make(chan os.Signal, 1)
@@ -159,6 +149,7 @@ func runTunnel(group TunnelGroup) error {
 	}
 
 	// Print VPN address once available
+	vpnReady := make(chan struct{})
 	go func() {
 		for i := 0; i < 30; i++ {
 			time.Sleep(1 * time.Second)
@@ -166,13 +157,25 @@ func runTunnel(group TunnelGroup) error {
 				for _, addr := range netMap.SelfNode.Addresses().All() {
 					log.Printf("VPN address: %s", addr.Addr())
 				}
+				close(vpnReady)
 				return
 			}
 		}
 	}()
 
 	// Set up all ports
-	for sub, pe := range group.Ports {
+	for portKey, pe := range group.Ports {
+		// Extract sub identifier from portKey (e.g., "S8080" → "", "Ca8080" → "a")
+		sub := ""
+		if len(portKey) > 1 {
+			for i := 1; i < len(portKey); i++ {
+				if portKey[i] >= '0' && portKey[i] <= '9' {
+					sub = portKey[1:i]
+					break
+				}
+			}
+		}
+
 		if pe.IsServer {
 			// Server: VPN listens → dials local target
 			// Use SetServeConfig to tell netstack to forward
@@ -199,15 +202,18 @@ func runTunnel(group TunnelGroup) error {
 			}(sub, pe)
 		} else {
 			// Client: local listens → dials VPN target
-			dialer := lb.Dialer()
-			listenAddr := fmt.Sprintf("127.0.0.1:%d", pe.ListenPort)
-			listener, err := net.Listen("tcp", listenAddr)
-			if err != nil {
-				return fmt.Errorf("failed to listen on %s: %w", listenAddr, err)
-			}
-			log.Printf("Client port %s: local %d -> VPN %s:%d", label(sub), pe.ListenPort, pe.TargetAddr, pe.TargetPort)
+			// Wait for VPN to be connected before starting listener
+			go func(sub string, pe *PortEntry) {
+				<-vpnReady
+				dialer := lb.Dialer()
+				listenAddr := fmt.Sprintf("127.0.0.1:%d", pe.ListenPort)
+				listener, err := net.Listen("tcp", listenAddr)
+				if err != nil {
+					log.Printf("failed to listen on %s: %v", listenAddr, err)
+					return
+				}
+				log.Printf("Client port %s: local %d -> VPN %s:%d", label(sub), pe.ListenPort, pe.TargetAddr, pe.TargetPort)
 
-			go func(pe *PortEntry, listener net.Listener) {
 				for {
 					conn, err := listener.Accept()
 					if err != nil {
@@ -216,7 +222,7 @@ func runTunnel(group TunnelGroup) error {
 					}
 					go handleConn(conn, pe, dialer)
 				}
-			}(pe, listener)
+			}(sub, pe)
 		}
 	}
 
