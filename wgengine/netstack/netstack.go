@@ -163,6 +163,13 @@ type Impl struct {
 	// DropICMP, if true, causes netstack to silently drop all ICMP echo requests.
 	// Used when the VPN is fully password-protected (untrusted).
 	DropICMP bool
+	// StealthDrop, if true, causes netstack to silently drop connections to
+	// ports that are not served (instead of replying with a RST), keeping the
+	// machine invisible to the VPN. It mirrors DropICMP: true when there are no
+	// server ports or all server ports are password-protected, false when at
+	// least one passwordless server port exists (a trusted VPN, where unserved
+	// ports are rejected with a RST for clear feedback).
+	StealthDrop bool
 	// Before Start is called, there can IPv6 Neighbor Discovery from the
 	// OS landing on netstack. We need to drop those packets until Start.
 	ready atomic.Bool // set to true once Start has been called
@@ -1087,12 +1094,26 @@ func (ns *Impl) acceptTCP(r *tcp.ForwarderRequest) {
 		// tailscale IP range), rewriting the dial target to
 		// 127.0.0.1:<port> and forwardTCP'ing the connection onto
 		// whatever random service happens to be listening on the
-		// host's loopback at that port. Reject cleanly with a RST
-		// here instead.
+		// host's loopback at that port. In stealth mode (no
+		// passwordless ports) drop silently so the machine stays
+		// invisible; otherwise reject with a RST.
+		if ns.StealthDrop {
+			return
+		}
 		r.Complete(true) // sends a RST
 		return
 	case isTailscaleIP:
-		dialIP = ipv4Loopback
+		// Only serve ports explicitly configured via SetServeConfig.
+		// Do not fall through to forwardTCP (which would rewrite the
+		// dial target to 127.0.0.1:<port> and expose whatever random
+		// service happens to be listening on the host's loopback at
+		// that port). In stealth mode (no passwordless ports) drop
+		// silently; otherwise reject with a RST.
+		if ns.StealthDrop {
+			return
+		}
+		r.Complete(true) // sends a RST
+		return
 	}
 	dialAddr := netip.AddrPortFrom(dialIP, uint16(reqDetails.LocalPort))
 

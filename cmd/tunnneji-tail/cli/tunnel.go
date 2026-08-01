@@ -121,6 +121,7 @@ func runTunnel(group TunnelGroup) error {
 			}
 		}
 		ns.DropICMP = group.DropICMP
+		ns.StealthDrop = group.DropICMP
 		if err := ns.Start(lb); err != nil {
 			log.Printf("netstack.Start: %v", err)
 		}
@@ -163,67 +164,73 @@ func runTunnel(group TunnelGroup) error {
 		}
 	}()
 
-	// Set up all ports
+	// Build a single serve config covering every server (-S) port so that
+	// each configured VPN port is served independently and no SetServeConfig
+	// call replaces the others.
+	serveConfig := &ipn.ServeConfig{}
+	for _, pe := range group.Ports {
+		if !pe.IsServer {
+			continue
+		}
+		if serveConfig.TCP == nil {
+			serveConfig.TCP = make(map[uint16]*ipn.TCPPortHandler)
+		}
+		serveConfig.TCP[uint16(pe.ListenPort)] = &ipn.TCPPortHandler{
+			TCPForward: fmt.Sprintf("%s:%d", pe.TargetAddr, pe.TargetPort),
+		}
+	}
+
+	if len(serveConfig.TCP) > 0 {
+		// Server: VPN listens → dials local target.
+		// Use SetServeConfig to tell netstack to forward. Retry until the
+		// netmap is ready and the config is accepted.
+		go func() {
+			for i := 0; i < 60; i++ {
+				time.Sleep(2 * time.Second)
+				if err := lb.SetServeConfig(serveConfig, ""); err != nil {
+					if debug {
+						log.Printf("SetServeConfig attempt %d failed: %v", i+1, err)
+					}
+					continue
+				}
+				for portKey, pe := range group.Ports {
+					if pe.IsServer {
+						log.Printf("Server port %s: VPN %d -> %s:%d", label(portSub(portKey)), pe.ListenPort, pe.TargetAddr, pe.TargetPort)
+					}
+				}
+				return
+			}
+			log.Printf("Warning: failed to set serve config after 60 attempts")
+		}()
+	}
+
+	// Set up client ports
 	for portKey, pe := range group.Ports {
-		// Extract sub identifier from portKey (e.g., "S8080" → "", "Ca8080" → "a")
-		sub := ""
-		if len(portKey) > 1 {
-			for i := 1; i < len(portKey); i++ {
-				if portKey[i] >= '0' && portKey[i] <= '9' {
-					sub = portKey[1:i]
-					break
-				}
-			}
-		}
-
 		if pe.IsServer {
-			// Server: VPN listens → dials local target
-			// Use SetServeConfig to tell netstack to forward
-			serveConfig := &ipn.ServeConfig{
-				TCP: map[uint16]*ipn.TCPPortHandler{
-					uint16(pe.ListenPort): {
-						TCPForward: fmt.Sprintf("%s:%d", pe.TargetAddr, pe.TargetPort),
-					},
-				},
-			}
-			go func(sub string, pe *PortEntry) {
-				for i := 0; i < 60; i++ {
-					time.Sleep(2 * time.Second)
-					if err := lb.SetServeConfig(serveConfig, ""); err != nil {
-						if debug {
-							log.Printf("SetServeConfig attempt %d failed: %v", i+1, err)
-						}
-						continue
-					}
-					log.Printf("Server port %s: VPN %d -> %s:%d", label(sub), pe.ListenPort, pe.TargetAddr, pe.TargetPort)
-					return
-				}
-				log.Printf("Warning: failed to set serve config after 60 attempts")
-			}(sub, pe)
-		} else {
-			// Client: local listens → dials VPN target
-			// Wait for VPN to be connected before starting listener
-			go func(sub string, pe *PortEntry) {
-				<-vpnReady
-				dialer := lb.Dialer()
-				listenAddr := fmt.Sprintf("127.0.0.1:%d", pe.ListenPort)
-				listener, err := net.Listen("tcp", listenAddr)
-				if err != nil {
-					log.Printf("failed to listen on %s: %v", listenAddr, err)
-					return
-				}
-				log.Printf("Client port %s: local %d -> VPN %s:%d", label(sub), pe.ListenPort, pe.TargetAddr, pe.TargetPort)
-
-				for {
-					conn, err := listener.Accept()
-					if err != nil {
-						log.Printf("Accept error on %s: %v", listenAddr, err)
-						return
-					}
-					go handleConn(conn, pe, dialer)
-				}
-			}(sub, pe)
+			continue
 		}
+		// Client: local listens → dials VPN target
+		// Wait for VPN to be connected before starting listener
+		go func(sub string, pe *PortEntry) {
+			<-vpnReady
+			dialer := lb.Dialer()
+			listenAddr := fmt.Sprintf("127.0.0.1:%d", pe.ListenPort)
+			listener, err := net.Listen("tcp", listenAddr)
+			if err != nil {
+				log.Printf("failed to listen on %s: %v", listenAddr, err)
+				return
+			}
+			log.Printf("Client port %s: local %d -> VPN %s:%d", label(sub), pe.ListenPort, pe.TargetAddr, pe.TargetPort)
+
+			for {
+				conn, err := listener.Accept()
+				if err != nil {
+					log.Printf("Accept error on %s: %v", listenAddr, err)
+					return
+				}
+				go handleConn(conn, pe, dialer)
+			}
+		}(portSub(portKey), pe)
 	}
 
 	sigCh := make(chan os.Signal, 1)
@@ -240,6 +247,19 @@ func label(sub string) string {
 		return "-"
 	}
 	return sub
+}
+
+// portSub extracts the sub identifier from a portKey (e.g., "S8080" → "",
+// "Ca8080" → "a").
+func portSub(portKey string) string {
+	if len(portKey) > 1 {
+		for i := 1; i < len(portKey); i++ {
+			if portKey[i] >= '0' && portKey[i] <= '9' {
+				return portKey[1:i]
+			}
+		}
+	}
+	return ""
 }
 
 func handleConn(conn net.Conn, pe *PortEntry, dialer *tsdial.Dialer) {
