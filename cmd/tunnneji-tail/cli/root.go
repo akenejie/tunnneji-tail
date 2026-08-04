@@ -216,16 +216,7 @@ func parseNumAndSub(s string) (int, string) {
 
 // parsePortMapping parses "port:addr:port"
 func parsePortMapping(s string) (listenPort int, addr string, targetPort int, err error) {
-	first := -1
-	last := -1
-	for i, c := range s {
-		if c == ':' {
-			if first == -1 {
-				first = i
-			}
-			last = i
-		}
-	}
+	first := strings.IndexByte(s, ':')
 	if first == -1 {
 		return 0, "", 0, fmt.Errorf("invalid mapping: %s (expected: port:addr or port:addr:port)", s)
 	}
@@ -233,30 +224,67 @@ func parsePortMapping(s string) (listenPort int, addr string, targetPort int, er
 	if err != nil {
 		return 0, "", 0, fmt.Errorf("invalid port: %s", s[:first])
 	}
-	if last == len(s)-1 {
+	rest := s[first+1:]
+	if rest == "" {
 		return 0, "", 0, fmt.Errorf("invalid mapping: %s (missing address)", s)
 	}
-	if last == first {
-		// Single colon: port:addr → targetPort = listenPort
-		return p1, s[first+1:], p1, nil
-	}
-	p2, err := strconv.Atoi(s[last+1:])
+	host, port, err := net.SplitHostPort(rest)
 	if err != nil {
-		return 0, "", 0, fmt.Errorf("invalid port: %s", s[last+1:])
+		// No explicit target port: the whole rest is the host and the target port
+		// equals the listen port.
+		if isBracketed(rest) {
+			// "[::1]" — bracketed IPv6 without a port.
+			return p1, trimBrackets(rest), p1, nil
+		}
+		if strings.Contains(rest, ":") {
+			// Unbracketed IPv6 literal is ambiguous (e.g. ":::1:8080") — require brackets.
+			return 0, "", 0, fmt.Errorf("invalid mapping: %s (IPv6 address must be bracketed, e.g. port:[::1]:port)", s)
+		}
+		return p1, rest, p1, nil
 	}
-	return p1, s[first+1 : last], p2, nil
+	p2, err := strconv.Atoi(port)
+	if err != nil {
+		return 0, "", 0, fmt.Errorf("invalid port: %s", port)
+	}
+	return p1, trimBrackets(host), p2, nil
+}
+
+// trimBrackets removes surrounding "[]" from an IPv6 literal, if present.
+func trimBrackets(host string) string {
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		return host[1 : len(host)-1]
+	}
+	return host
+}
+
+// isBracketed reports whether host is wrapped in "[]" (an IPv6 literal).
+func isBracketed(host string) bool {
+	return strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]")
+}
+
+// formatIP returns an IP as a dial-ready host string: IPv4 as-is, IPv6 bracketed.
+func formatIP(ip net.IP) string {
+	if ip.To4() != nil {
+		return ip.String()
+	}
+	return "[" + ip.String() + "]"
 }
 
 // resolveHost resolves a hostname to an IP address.
-// If the input is already an IP, it returns it unchanged.
+// IPv6 results are returned bracketed ("[::1]") so they can be used in "host:port" strings.
+// If the input is already an IP, it is normalized and returned.
 // If resolution fails, the original string is returned (may be a VPN-internal name).
 func resolveHost(host string) string {
-	if net.ParseIP(host) != nil {
-		return host
+	bare := trimBrackets(host)
+	if ip := net.ParseIP(bare); ip != nil {
+		return formatIP(ip)
 	}
-	ips, err := net.LookupHost(host)
+	ips, err := net.LookupHost(bare)
 	if err != nil || len(ips) == 0 {
 		return host
+	}
+	if ip := net.ParseIP(ips[0]); ip != nil {
+		return formatIP(ip)
 	}
 	return ips[0]
 }
