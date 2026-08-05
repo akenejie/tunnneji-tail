@@ -375,6 +375,7 @@ func (b *LocalBackend) setServeConfigLocked(config *ipn.ServeConfig, etag string
 	}
 
 	b.setTCPPortsInterceptedFromNetmapAndPrefsLocked(b.pm.CurrentPrefs())
+	b.warmServeTargets(config)
 
 	// clean up and close all previously open foreground sessions
 	// if the current ServeConfig has overwritten them.
@@ -645,6 +646,158 @@ func (b *LocalBackend) tcpHandlerForServe(dport uint16, srcAddr netip.AddrPort, 
 	}, "")
 }
 
+// serveTarget resolves and caches the dial address for a TCPForward serve
+// target, i.e. the back end of an -S or -C service ("host:port").
+//
+// For hostname targets (e.g. "localhost") it resolves the name once and
+// probes each candidate address with a short TCP connect, pinning the first
+// one that accepts connections. This keeps per-connection dials fast (no DNS
+// overhead on every connection) while behaving like a fixed IP when the name
+// resolves to a reachable loopback address. If a connection to the pinned
+// address later fails, the address is invalidated and re-resolved so traffic
+// can fail over to a differently-resolved address.
+//
+// Addresses that are already IP literals are pinned directly without probing.
+type serveTarget struct {
+	host string
+	port string
+
+	// lookup resolves host names to candidate IP addresses. It is a field so
+	// tests can inject a deterministic resolver. Defaults to net.LookupHost.
+	lookup func(string) ([]string, error)
+	// probe reports whether a candidate "ip:port" accepts TCP connections.
+	// Defaults to probeTCP. Tests inject a controlled prober.
+	probe func(string) bool
+
+	mu  sync.Mutex
+	cur string
+}
+
+// serveTargetCache caches one serveTarget per TCPForward back destination.
+// It is process-wide because a given back-end ("localhost:8080") refers to
+// the same local target regardless of which service/backend dials it.
+var serveTargetCache sync.Map // key: host:port (string) → *serveTarget
+
+func serveTargetFor(backDst string) *serveTarget {
+	if v, ok := serveTargetCache.Load(backDst); ok {
+		return v.(*serveTarget)
+	}
+	st := newServeTarget(backDst)
+	prev, loaded := serveTargetCache.LoadOrStore(backDst, st)
+	if loaded {
+		return prev.(*serveTarget)
+	}
+	return st
+}
+
+func newServeTarget(hostport string) *serveTarget {
+	st := &serveTarget{
+		lookup: net.LookupHost,
+		probe:  probeTCP,
+	}
+	host, port, err := net.SplitHostPort(hostport)
+	if err != nil {
+		st.host = hostport
+		return st
+	}
+	st.host = host
+	st.port = port
+	return st
+}
+
+// addr returns the address to dial, resolving and probing the target the
+// first time it is called and caching the pinned result afterwards.
+func (st *serveTarget) addr() string {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if st.cur != "" {
+		return st.cur
+	}
+	if st.port == "" {
+		return st.host
+	}
+	if net.ParseIP(st.host) != nil {
+		st.cur = net.JoinHostPort(st.host, st.port)
+		return st.cur
+	}
+	ips, err := st.lookup(st.host)
+	if err != nil || len(ips) == 0 {
+		// A name the resolver can't enumerate (e.g. a Tailscale
+		// internal name). Leave it unresolved and let the dialer handle it.
+		return net.JoinHostPort(st.host, st.port)
+	}
+	for _, ip := range ips {
+		cand := net.JoinHostPort(ip, st.port)
+		if st.probe(cand) {
+			st.cur = cand
+			return st.cur
+		}
+	}
+	// Every candidate is currently empty. Hold the first resolved IP anyway
+	// so later connections reuse it without re-resolving; only a connection
+	// failure triggers the next re-resolution and empty-check.
+	st.cur = net.JoinHostPort(ips[0], st.port)
+	return st.cur
+}
+
+// invalidate drops the cached pinned address so the next addr() call
+// re-resolves and re-probes the target.
+func (st *serveTarget) invalidate() {
+	st.mu.Lock()
+	st.cur = ""
+	st.mu.Unlock()
+}
+
+// probeTCP reports whether a TCP connection to addr can be established.
+//
+// The timeout is kept short (100ms) because the empty-check probes candidates
+// sequentially in resolution order: at connection time the worst case is
+// timeout * number-of-IPs, which a requester would otherwise interpret as its
+// own timeout. A false "empty" here is harmless: the target simply isn't
+// pinned, and the real dial (with a longer deadline) still proceeds.
+func probeTCP(addr string) bool {
+	d := net.Dialer{Timeout: 100 * time.Millisecond}
+	c, err := d.Dial("tcp", addr)
+	if err != nil {
+		return false
+	}
+	c.Close()
+	return true
+}
+
+// dial connects to the target, failing over to a different resolved address
+// if the currently pinned one is unreachable. It returns the connection and
+// the address that was actually used.
+func (st *serveTarget) dial(ctx context.Context, systemDial func(context.Context, string, string) (net.Conn, error)) (net.Conn, string, error) {
+	target := st.addr()
+	c, err := systemDial(ctx, "tcp", target)
+	if err == nil {
+		return c, target, nil
+	}
+	// The pinned address failed; re-resolve and try another one.
+	st.invalidate()
+	if t2 := st.addr(); t2 != target {
+		if c2, err2 := systemDial(ctx, "tcp", t2); err2 == nil {
+			return c2, t2, nil
+		}
+	}
+	return c, target, err
+}
+
+// warmServeTargets resolves and probes each TCPForward back end of config
+// asynchronously when a serve config is applied, so that the first connection
+// reuses the pre-resolved pinned address instead of paying the DNS cost.
+func (b *LocalBackend) warmServeTargets(config *ipn.ServeConfig) {
+	if config == nil {
+		return
+	}
+	for _, tcph := range config.TCP {
+		if backDst := tcph.TCPForward; backDst != "" {
+			go serveTargetFor(backDst).addr()
+		}
+	}
+}
+
 func (b *LocalBackend) tcpHandlerForServeTCP(tcph ipn.TCPPortHandlerView, dport uint16, srcAddr netip.AddrPort, httpCtx *serveHTTPContext, forVIPService tailcfg.ServiceName) func(net.Conn) error {
 	if tcph.HTTPS() || tcph.HTTP() {
 		hs := &http.Server{
@@ -669,14 +822,15 @@ func (b *LocalBackend) tcpHandlerForServeTCP(tcph ipn.TCPPortHandlerView, dport 
 	}
 
 	if backDst := tcph.TCPForward(); backDst != "" {
+		st := serveTargetFor(backDst)
 		return func(conn net.Conn) error {
 			defer conn.Close()
 			conn = b.meteredConnForService(conn, forVIPService)
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			backConn, err := b.dialer.SystemDial(ctx, "tcp", backDst)
+			backConn, target, err := st.dial(ctx, b.dialer.SystemDial)
 			cancel()
 			if err != nil {
-				b.logf("localbackend: failed to TCP proxy port %v (from %v) to %s: %v", dport, srcAddr, backDst, err)
+				b.logf("localbackend: failed to TCP proxy port %v (from %v) to %s: %v", dport, srcAddr, target, err)
 				return nil
 			}
 			defer backConn.Close()

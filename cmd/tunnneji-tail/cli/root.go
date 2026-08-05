@@ -654,9 +654,14 @@ func parseTunnelArgs(args []string) ([]TunnelGroup, error) {
 				}
 				usedPorts[portKey] = portInfo{direction: entry.direction, sub: sub}
 
-				// Resolve hostname to IP for NAT processing
-				addr = resolveHost(addr)
-
+				// Keep hostnames as-is here: per-port resolution, probing and
+				// failover is delegated to the serve backend (serveTarget),
+				// which pins a working resolved IP and re-resolves on
+				// connection failure. IP literals are normalized only to
+				// bracket IPv6 addresses so "host:port" forms dial correctly.
+				if ip := net.ParseIP(trimBrackets(addr)); ip != nil {
+					addr = formatIP(ip)
+				}
 				pe := &PortEntry{
 					IsServer:   entry.direction == "S",
 					ListenPort: listenPort,
