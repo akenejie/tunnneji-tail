@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/tailscale/wireguard-go/conn"
-	"gvisor.dev/gvisor/pkg/refs"
 	"gvisor.dev/gvisor/pkg/tcpip"
 	"gvisor.dev/gvisor/pkg/tcpip/adapters/gonet"
 	"gvisor.dev/gvisor/pkg/tcpip/header"
@@ -30,7 +29,6 @@ import (
 	"gvisor.dev/gvisor/pkg/tcpip/transport/tcp"
 	"gvisor.dev/gvisor/pkg/tcpip/transport/udp"
 	"gvisor.dev/gvisor/pkg/waiter"
-	"tailscale.com/envknob"
 	"tailscale.com/feature/buildfeatures"
 	"tailscale.com/ipn/ipnlocal"
 	"tailscale.com/net/ipset"
@@ -52,8 +50,6 @@ import (
 	"tailscale.com/wgengine/magicsock"
 	"tailscale.com/wgengine/netstack/gro"
 )
-
-const debugPackets = false
 
 // If non-zero, these override the values returned from the corresponding
 // functions, below. They are accessed atomically because background
@@ -95,40 +91,10 @@ func maxInFlightConnectionAttempts() int {
 	}
 }
 
-var debugNetstack = envknob.RegisterBool("TS_DEBUG_NETSTACK")
-
-// netstackKeepaliveIdle overrides the netstack default (~2h) TCP keepalive
-// idle time for forwarded connections. When a tailnet peer goes away without
-// closing its connections (pod deleted, peer removed from netmap, silent
-// network partition), the forwardTCP io.Copy goroutines block until keepalive
-// fires. Under high-churn forwarding — many short-lived peers, or peers
-// holding thousands of proxied connections that drop at once — the 2h default
-// lets stuck goroutines accumulate faster than they clear. Value is a Go
-// duration, e.g. "60s". See tailscale/tailscale#4522.
-var netstackKeepaliveIdle = envknob.RegisterDuration("TS_NETSTACK_KEEPALIVE_IDLE")
-
-// netstackKeepaliveInterval overrides the netstack default (75s) TCP keepalive
-// probe interval for forwarded connections. Independent of
-// netstackKeepaliveIdle; setting one without the other leaves the unset knob
-// at the netstack default. Value is a Go duration, e.g. "15s".
-var netstackKeepaliveInterval = envknob.RegisterDuration("TS_NETSTACK_KEEPALIVE_INTERVAL")
-
 var (
 	serviceIP   = tsaddr.TailscaleServiceIP()
 	serviceIPv6 = tsaddr.TailscaleServiceIPv6()
 )
-
-func init() {
-	mode := envknob.String("TS_DEBUG_NETSTACK_LEAK_MODE")
-	if mode == "" {
-		return
-	}
-	var lm refs.LeakMode
-	if err := lm.Set(mode); err != nil {
-		panic(err)
-	}
-	refs.SetLeakMode(lm)
-}
 
 // Impl contains the state for the netstack implementation,
 // and implements wgengine.FakeImpl to act as a userspace network
@@ -595,10 +561,6 @@ func (ns *Impl) handleLocalPackets(p *packet.Parsed, t *tstun.Wrapper, gro *gro.
 		// packet; resume processing.
 		return filter.Accept, gro
 	}
-	if debugPackets {
-		ns.logf("[v2] service packet in (from %v): % x", p.Src, p.Buffer())
-	}
-
 	gro = ns.linkEP.gro(p, gro)
 	return filter.DropSilently, gro
 }
@@ -672,10 +634,6 @@ func (ns *Impl) inject() {
 			continue
 		}
 
-		if debugPackets {
-			ns.logf("[v2] packet Write out: % x", stack.PayloadSince(pkt.NetworkHeader()).AsSlice())
-		}
-
 		// In the normal case, netstack synthesizes the bytes for
 		// traffic which should transit back into WG and go to peers.
 		// However, some uses of netstack (presently, magic DNS)
@@ -725,10 +683,6 @@ func (ns *Impl) shouldSendToHost(pkt *stack.PacketBuffer) bool {
 		srcIP := netip.AddrFrom16(v.SourceAddress().As16())
 		if srcIP == serviceIPv6 {
 			return true
-		}
-	default:
-		if debugNetstack() {
-			ns.logf("netstack: unexpected packet in shouldSendToHost: %T", v)
 		}
 	}
 
@@ -817,9 +771,6 @@ func (ns *Impl) userPing(dstIP netip.Addr, pingResPkt []byte) {
 		}
 		return
 	}
-	if debugNetstack() {
-		ns.logf("exec pinged %v in %v", dstIP, time.Since(t0))
-	}
 	if err := ns.tundev.InjectOutbound(pingResPkt); err != nil {
 		ns.logf("InjectOutbound ping response: %v", err)
 	}
@@ -864,9 +815,6 @@ func (ns *Impl) injectInbound(p *packet.Parsed, t *tstun.Wrapper, gro *gro.GRO) 
 		return filter.DropSilently, gro
 	}
 
-	if debugPackets {
-		ns.logf("[v2] packet in (from %v): % x", p.Src, p.Buffer())
-	}
 	gro = ns.linkEP.gro(p, gro)
 
 	// We've now delivered this to netstack, so we're done.
@@ -948,9 +896,6 @@ var (
 
 func (ns *Impl) acceptTCP(r *tcp.ForwarderRequest) {
 	reqDetails := r.ID()
-	if debugNetstack() {
-		ns.logf("[v2] TCP ForwarderRequest: %s", stringifyTEI(reqDetails))
-	}
 	clientRemoteIP := netaddrIPFromNetstackIP(reqDetails.RemoteAddress)
 	if !clientRemoteIP.IsValid() {
 		ns.logf("invalid RemoteAddress in TCP ForwarderRequest: %s", stringifyTEI(reqDetails))
@@ -1001,27 +946,12 @@ func (ns *Impl) acceptTCP(r *tcp.ForwarderRequest) {
 		// the connection or gone completely offline eventually time out.
 		// Applications might be setting this on a forwarded connection, but from
 		// userspace we can not see those, so the best we can do is to always
-		// perform them with conservative timing.
-		// Netstack defaults match the Linux defaults and result in a little over
-		// two hours before the socket is closed due to keepalive. Operators can
-		// shorten the timers with TS_NETSTACK_KEEPALIVE_IDLE and
-		// TS_NETSTACK_KEEPALIVE_INTERVAL (see netstackKeepaliveIdle); the
-		// defaults are left unchanged because the long timers are low-impact for
+		// perform them with conservative timing. Netstack defaults match the
+		// Linux defaults and result in a little over two hours before the socket
+		// is closed due to keepalive. The long timers are low-impact for
 		// battery-powered peers and this has broad implications in userspace
 		// mode (lingering connections to fork-style daemons, etc). See
 		// tailscale/tailscale#4522.
-		if d := netstackKeepaliveIdle(); d > 0 {
-			idle := tcpip.KeepaliveIdleOption(d)
-			if err := ep.SetSockOpt(&idle); err != nil {
-				ns.logf("netstack: SetSockOpt(KeepaliveIdle=%v) failed: %v", d, err)
-			}
-		}
-		if d := netstackKeepaliveInterval(); d > 0 {
-			intvl := tcpip.KeepaliveIntervalOption(d)
-			if err := ep.SetSockOpt(&intvl); err != nil {
-				ns.logf("netstack: SetSockOpt(KeepaliveInterval=%v) failed: %v", d, err)
-			}
-		}
 		ep.SocketOptions().SetKeepAlive(true)
 
 		// The ForwarderRequest.CreateEndpoint above asynchronously
@@ -1135,9 +1065,6 @@ type tcpCloser interface {
 
 func (ns *Impl) forwardTCP(getClient func(...tcpip.SettableSocketOption) *gonet.TCPConn, clientRemoteIP netip.Addr, wq *waiter.Queue, dialAddr netip.AddrPort, isLocal bool) (handled bool) {
 	dialAddrStr := dialAddr.String()
-	if debugNetstack() {
-		ns.logf("[v2] netstack: forwarding incoming connection to %s", dialAddrStr)
-	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -1152,9 +1079,6 @@ func (ns *Impl) forwardTCP(getClient func(...tcpip.SettableSocketOption) *gonet.
 	go func() {
 		select {
 		case <-notifyCh:
-			if debugNetstack() {
-				ns.logf("[v2] netstack: forwardTCP notifyCh fired; canceling context for %s", dialAddrStr)
-			}
 		case <-done:
 		}
 		cancel()
@@ -1260,9 +1184,6 @@ func (ns *Impl) acceptUDPNoICMP(r *udp.ForwarderRequest) bool {
 
 func (ns *Impl) acceptUDP(r *udp.ForwarderRequest) {
 	sess := r.ID()
-	if debugNetstack() {
-		ns.logf("[v2] UDP ForwarderRequest: %v", stringifyTEI(sess))
-	}
 	var wq waiter.Queue
 	ep, err := r.CreateEndpoint(&wq)
 	if err != nil {
@@ -1312,9 +1233,6 @@ var udpBufPool = &sync.Pool{
 // proxy to it directly.
 func (ns *Impl) forwardUDP(client *gonet.UDPConn, clientAddr, dstAddr netip.AddrPort) {
 	port, srcPort := dstAddr.Port(), clientAddr.Port()
-	if debugNetstack() {
-		ns.logf("[v2] netstack: forwarding incoming UDP connection on port %v", port)
-	}
 
 	// IP filter for this server (-S) port.
 	if ns.AllowedIPsForPort != nil {
@@ -1430,9 +1348,6 @@ func (ns *Impl) forwardUDP(client *gonet.UDPConn, clientAddr, dstAddr netip.Addr
 }
 
 func startPacketCopy(ctx context.Context, cancel context.CancelFunc, dst net.PacketConn, dstAddr net.Addr, src net.PacketConn, logf logger.Logf, extend func()) {
-	if debugNetstack() {
-		logf("[v2] netstack: startPacketCopy to %v (%T) from %T", dstAddr, dst, src)
-	}
 	go func() {
 		defer cancel() // tear down the other direction's copy
 
@@ -1458,9 +1373,6 @@ func startPacketCopy(ctx context.Context, cancel context.CancelFunc, dst net.Pac
 						logf("write packet to %s failed: %v", dstAddr, err)
 					}
 					return
-				}
-				if debugNetstack() {
-					logf("[v2] wrote UDP packet %s -> %s", srcAddr, dstAddr)
 				}
 				extend()
 			}
