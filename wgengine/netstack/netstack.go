@@ -160,6 +160,10 @@ type Impl struct {
 	// PasswordForPort, if non-nil, enables ChaCha20 encryption for data on the port.
 	// Key is port number, value is the password used to derive the encryption key.
 	PasswordForPort map[uint16]string
+	// ServeTargets, if non-nil, maps each VPN listen port to the local target
+	// address:port that -S should dial for server-side forwarding. Used by
+	// UDP forwarding (TCP uses netstack ServeConfig via the LocalBackend).
+	ServeTargets map[uint16]netip.AddrPort
 	// DropICMP, if true, causes netstack to silently drop all ICMP echo requests.
 	// Used when the VPN is fully password-protected (untrusted).
 	DropICMP bool
@@ -1312,11 +1316,36 @@ func (ns *Impl) forwardUDP(client *gonet.UDPConn, clientAddr, dstAddr netip.Addr
 		ns.logf("[v2] netstack: forwarding incoming UDP connection on port %v", port)
 	}
 
+	// IP filter for this server (-S) port.
+	if ns.AllowedIPsForPort != nil {
+		if allowed, ok := ns.AllowedIPsForPort[port]; ok {
+			srcIP := clientAddr.Addr()
+			found := false
+			for _, pfx := range allowed {
+				if pfx.Contains(srcIP) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return // source IP not allowed, drop silently
+			}
+		}
+	}
+
 	var backendListenAddr *net.UDPAddr
 	var backendRemoteAddr *net.UDPAddr
 	isLocal := ns.isLocalIP(dstAddr.Addr())
 	isLoopback := dstAddr.Addr() == ipv4Loopback || dstAddr.Addr() == ipv6Loopback
-	if isLocal {
+	// If this VPN port has a configured -S local target, forward to that
+	// target (which is a loopback/served destination) instead of using the
+	// VPN port number as the backend port.
+	if tgt, ok := ns.ServeTargets[uint16(port)]; ok {
+		backendRemoteAddr = net.UDPAddrFromAddrPort(tgt)
+		backendListenAddr = &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: int(srcPort)}
+		isLocal = true
+		isLoopback = false
+	} else if isLocal {
 		backendRemoteAddr = &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: int(port)}
 		backendListenAddr = &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: int(srcPort)}
 	} else if isLoopback {
@@ -1384,8 +1413,14 @@ func (ns *Impl) forwardUDP(client *gonet.UDPConn, clientAddr, dstAddr netip.Addr
 	extend := func() {
 		timer.Reset(idleTimeout)
 	}
-	startPacketCopy(ctx, cancel, client, net.UDPAddrFromAddrPort(clientAddr), backendConn, ns.logf, extend)
-	startPacketCopy(ctx, cancel, backendConn, backendRemoteAddr, client, ns.logf, extend)
+	var clientPC net.PacketConn = client
+	if ns.PasswordForPort != nil {
+		if password, ok := ns.PasswordForPort[port]; ok {
+			clientPC = newEncryptedUDPPacketConn(client, password)
+		}
+	}
+	startPacketCopy(ctx, cancel, clientPC, net.UDPAddrFromAddrPort(clientAddr), backendConn, ns.logf, extend)
+	startPacketCopy(ctx, cancel, backendConn, backendRemoteAddr, clientPC, ns.logf, extend)
 	if isLocal {
 		// Wait for the copies to be done before decrementing the
 		// subnet address count to potentially remove the route.

@@ -3,7 +3,9 @@ package netstack
 import (
 	"crypto/sha256"
 	"crypto/rand"
+	"errors"
 	"io"
+	"net"
 
 	"gvisor.dev/gvisor/pkg/tcpip/adapters/gonet"
 	"golang.org/x/crypto/chacha20"
@@ -102,3 +104,71 @@ func (w *Chacha20Writer) Write(p []byte) (int, error) {
 	w.cipher.XORKeyStream(encrypted, p)
 	return w.w.Write(encrypted)
 }
+
+var errUDPPacketTooShort = errors.New("encrypted UDP packet too short")
+
+// EncryptUDPPacket encrypts a complete UDP datagram with a fresh random
+// nonce. The output format is [12-byte nonce][ciphertext].
+func EncryptUDPPacket(plaintext []byte, key [32]byte) ([]byte, error) {
+	nonce := make([]byte, Chacha20NonceLen)
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, err
+	}
+	cipher, err := chacha20.NewUnauthenticatedCipher(key[:], nonce)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]byte, Chacha20NonceLen+len(plaintext))
+	copy(out, nonce)
+	cipher.XORKeyStream(out[Chacha20NonceLen:], plaintext)
+	return out, nil
+}
+
+// DecryptUDPPacket decrypts a datagram previously produced by
+// EncryptUDPPacket, returning the plaintext.
+func DecryptUDPPacket(packet []byte, key [32]byte) ([]byte, error) {
+	if len(packet) < Chacha20NonceLen {
+		return nil, errUDPPacketTooShort
+	}
+	cipher, err := chacha20.NewUnauthenticatedCipher(key[:], packet[:Chacha20NonceLen])
+	if err != nil {
+		return nil, err
+	}
+	out := make([]byte, len(packet)-Chacha20NonceLen)
+	cipher.XORKeyStream(out, packet[Chacha20NonceLen:])
+	return out, nil
+}
+
+// encryptedUDPPacketConn wraps a net.PacketConn with per-datagram ChaCha20
+// encryption. Every datagram read/written carries its own nonce prefix, so the
+// stream-less nature of UDP is preserved while still applying the port
+// password to the traffic.
+type encryptedUDPPacketConn struct {
+	net.PacketConn
+	key [32]byte
+}
+
+func newEncryptedUDPPacketConn(conn net.PacketConn, password string) *encryptedUDPPacketConn {
+	return &encryptedUDPPacketConn{PacketConn: conn, key: DeriveKey(password)}
+}
+
+func (c *encryptedUDPPacketConn) ReadFrom(b []byte) (int, net.Addr, error) {
+	n, addr, err := c.PacketConn.ReadFrom(b)
+	if err != nil {
+		return 0, addr, err
+	}
+	dec, err := DecryptUDPPacket(b[:n], c.key)
+	if err != nil {
+		return 0, addr, err
+	}
+	return copy(b, dec), addr, nil
+}
+
+func (c *encryptedUDPPacketConn) WriteTo(b []byte, addr net.Addr) (int, error) {
+	enc, err := EncryptUDPPacket(b, c.key)
+	if err != nil {
+		return 0, err
+	}
+	return c.PacketConn.WriteTo(enc, addr)
+}
+

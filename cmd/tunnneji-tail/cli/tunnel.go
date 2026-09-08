@@ -119,6 +119,12 @@ func runTunnel(group TunnelGroup) error {
 			if pe.Password != "" {
 				ns.PasswordForPort[uint16(pe.ListenPort)] = pe.Password
 			}
+			if ns.ServeTargets == nil {
+				ns.ServeTargets = make(map[uint16]netip.AddrPort)
+			}
+			if hostIP, err := netip.ParseAddr(resolveHost(pe.TargetAddr)); err == nil {
+				ns.ServeTargets[uint16(pe.ListenPort)] = netip.AddrPortFrom(hostIP, uint16(pe.TargetPort))
+			}
 		}
 		ns.DropICMP = group.DropICMP
 		ns.StealthDrop = group.DropICMP
@@ -215,21 +221,10 @@ func runTunnel(group TunnelGroup) error {
 			<-vpnReady
 			dialer := lb.Dialer()
 			listenAddr := fmt.Sprintf("127.0.0.1:%d", pe.ListenPort)
-			listener, err := net.Listen("tcp", listenAddr)
-			if err != nil {
-				log.Printf("failed to listen on %s: %v", listenAddr, err)
-				return
-			}
 			log.Printf("Client port %s: local %d -> VPN %s:%d", label(sub), pe.ListenPort, pe.TargetAddr, pe.TargetPort)
 
-			for {
-				conn, err := listener.Accept()
-				if err != nil {
-					log.Printf("Accept error on %s: %v", listenAddr, err)
-					return
-				}
-				go handleConn(conn, pe, dialer)
-			}
+			go setupTCPListener(listenAddr, pe, dialer)
+			go setupUDPListener(listenAddr, pe, dialer)
 		}(portSub(portKey), pe)
 	}
 
@@ -260,6 +255,162 @@ func portSub(portKey string) string {
 		}
 	}
 	return ""
+}
+
+func setupTCPListener(listenAddr string, pe *PortEntry, dialer *tsdial.Dialer) {
+	listener, err := net.Listen("tcp", listenAddr)
+	if err != nil {
+		log.Printf("failed to listen on %s (tcp): %v", listenAddr, err)
+		return
+	}
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			log.Printf("Accept error on %s: %v", listenAddr, err)
+			return
+		}
+		go handleConn(conn, pe, dialer)
+	}
+}
+
+func setupUDPListener(listenAddr string, pe *PortEntry, dialer *tsdial.Dialer) {
+	ua, err := net.ResolveUDPAddr("udp", listenAddr)
+	if err != nil {
+		log.Printf("failed to resolve %s (udp): %v", listenAddr, err)
+		return
+	}
+	listener, err := net.ListenUDP("udp", ua)
+	if err != nil {
+		log.Printf("failed to listen on %s (udp): %v", listenAddr, err)
+		return
+	}
+	handleUDP(listener, pe, dialer)
+}
+
+// udpSession pairs a VPN-bound UDP connection with the local source address
+// that initiated it, so return traffic can be routed back.
+type udpSession struct {
+	remote     net.Conn     // connection into the VPN (via netstack)
+	local      *net.UDPAddr // local source that sent to this session
+	encryptKey *[32]byte    // non-nil if this session is password-protected
+}
+
+func handleUDP(local *net.UDPConn, pe *PortEntry, dialer *tsdial.Dialer) {
+	defer local.Close()
+
+	host := resolveHost(pe.TargetAddr)
+	target := fmt.Sprintf("%s:%d", host, pe.TargetPort)
+
+	var key *[32]byte
+	if pe.Password != "" {
+		k := netstack.DeriveKey(pe.Password)
+		key = &k
+	}
+
+	var mu sync.Mutex
+	sessions := make(map[string]*udpSession)
+
+	buf := make([]byte, 65535-32)
+	for {
+		n, src, err := local.ReadFromUDP(buf)
+		if err != nil {
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				continue
+			}
+			log.Printf("UDP read error on %s: %v", local.LocalAddr(), err)
+			return
+		}
+		log.Printf("UDP recv on %s from %s: %d bytes", local.LocalAddr(), src, n)
+
+		// IP filtering (same -AC whitelist as TCP on this client port)
+		if len(pe.Accept) > 0 {
+			srcIP := src.AddrPort().Addr()
+			found := false
+			for _, pfx := range pe.Accept {
+				if pfx.Contains(srcIP) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				continue // local source IP not allowed, drop
+			}
+		}
+
+		keyStr := src.String()
+		mu.Lock()
+		sess := sessions[keyStr]
+		if sess == nil {
+			remote, err := dialer.UserDial(context.Background(), "udp", target)
+			if err != nil {
+				mu.Unlock()
+				log.Printf("Failed to dial UDP %s: %v", target, err)
+				continue
+			}
+			log.Printf("UDP dial OK: %s -> %v (%T)", target, remote.LocalAddr(), remote)
+			sess = &udpSession{remote: remote, local: src, encryptKey: key}
+			sessions[keyStr] = sess
+			go udpRemoteToLocal(sess, local, &mu, sessions)
+		}
+		mu.Unlock()
+
+		if key != nil {
+			enc, err := netstack.EncryptUDPPacket(buf[:n], *key)
+			if err != nil {
+				log.Printf("UDP encrypt error: %v", err)
+				continue
+			}
+			if _, err := sess.remote.Write(enc); err != nil {
+				log.Printf("UDP write(vpn/enc) error: %v", err)
+				mu.Lock()
+				delete(sessions, keyStr)
+				mu.Unlock()
+				sess.remote.Close()
+			} else {
+				log.Printf("UDP wrote %d bytes (enc) to VPN", len(enc))
+			}
+		} else {
+			if _, err := sess.remote.Write(buf[:n]); err != nil {
+				log.Printf("UDP write(vpn) error: %v", err)
+				mu.Lock()
+				delete(sessions, keyStr)
+				mu.Unlock()
+				sess.remote.Close()
+			} else {
+				log.Printf("UDP wrote %d bytes to VPN", n)
+			}
+		}
+	}
+}
+
+func udpRemoteToLocal(sess *udpSession, local *net.UDPConn, mu *sync.Mutex, sessions map[string]*udpSession) {
+	keyStr := sess.local.String()
+	buf := make([]byte, 65535)
+	for {
+		n, err := sess.remote.Read(buf)
+		if err != nil {
+			break
+		}
+		if sess.encryptKey != nil {
+			dec, err := netstack.DecryptUDPPacket(buf[:n], *sess.encryptKey)
+			if err != nil {
+				continue
+			}
+			if _, err := local.WriteToUDP(dec, sess.local); err != nil {
+				break
+			}
+		} else {
+			if _, err := local.WriteToUDP(buf[:n], sess.local); err != nil {
+				break
+			}
+		}
+	}
+	mu.Lock()
+	if sessions[keyStr] == sess {
+		delete(sessions, keyStr)
+	}
+	mu.Unlock()
+	sess.remote.Close()
 }
 
 func handleConn(conn net.Conn, pe *PortEntry, dialer *tsdial.Dialer) {
