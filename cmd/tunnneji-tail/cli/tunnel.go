@@ -320,7 +320,9 @@ func handleUDP(local *net.UDPConn, pe *PortEntry, dialer *tsdial.Dialer) {
 			log.Printf("UDP read error on %s: %v", local.LocalAddr(), err)
 			return
 		}
-		log.Printf("UDP recv on %s from %s: %d bytes", local.LocalAddr(), src, n)
+		if debug {
+			log.Printf("UDP recv on %s from %s: %d bytes", local.LocalAddr(), src, n)
+		}
 
 		// IP filtering (same -AC whitelist as TCP on this client port)
 		if len(pe.Accept) > 0 {
@@ -366,7 +368,7 @@ func handleUDP(local *net.UDPConn, pe *PortEntry, dialer *tsdial.Dialer) {
 				delete(sessions, keyStr)
 				mu.Unlock()
 				sess.remote.Close()
-			} else {
+			} else if debug {
 				log.Printf("UDP wrote %d bytes (enc) to VPN", len(enc))
 			}
 		} else {
@@ -376,7 +378,7 @@ func handleUDP(local *net.UDPConn, pe *PortEntry, dialer *tsdial.Dialer) {
 				delete(sessions, keyStr)
 				mu.Unlock()
 				sess.remote.Close()
-			} else {
+			} else if debug {
 				log.Printf("UDP wrote %d bytes to VPN", n)
 			}
 		}
