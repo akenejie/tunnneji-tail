@@ -92,7 +92,7 @@ func likelyHomeRouterIPLinux() (ret netip.Addr, myIP netip.Addr, ok bool) {
 		// Try to get the local IP of the interface associated with
 		// this route to short-circuit finding the IP associated with
 		// this gateway. This isn't fatal if it fails.
-		if len(f) > 0 && !disableLikelyHomeRouterIPSelf() {
+		if len(f) > 0 {
 			ForeachInterface(func(ni Interface, pfxs []netip.Prefix) {
 				// Ensure this is the same interface
 				if !f[0].EqualString(ni.Name) {

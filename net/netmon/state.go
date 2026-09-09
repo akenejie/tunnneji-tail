@@ -14,7 +14,6 @@ import (
 	"sort"
 	"strings"
 
-	"tailscale.com/envknob"
 	"tailscale.com/feature"
 	"tailscale.com/feature/buildfeatures"
 	"tailscale.com/hostinfo"
@@ -22,11 +21,6 @@ import (
 	"tailscale.com/net/tsaddr"
 	"tailscale.com/util/mak"
 )
-
-// forceAllIPv6Endpoints is a debug knob that when set forces the client to
-// report all IPv6 endpoints rather than trim endpoints that are siblings on the
-// same interface and subnet.
-var forceAllIPv6Endpoints = envknob.RegisterBool("TS_DEBUG_FORCE_ALL_IPV6_ENDPOINTS")
 
 // LoginEndpointForProxyDetermination is the URL used for testing
 // which HTTP proxy the system should use.
@@ -119,7 +113,7 @@ func LocalAddresses() (regular, loopback []netip.Addr, err error) {
 						// IPv6, as we have seen some nodes with extremely large
 						// numbers of assigned addresses being carved out of
 						// same-subnet allocations.
-						if forceAllIPv6Endpoints() || subnets[curMask] < 2 {
+						if subnets[curMask] < 2 {
 							regular6 = append(regular6, ip)
 						}
 						mak.Set(&subnets, curMask, subnets[curMask]+1)
@@ -690,10 +684,6 @@ func HTTPOfListener(ln net.Listener) string {
 // the system's interfaces.
 var likelyHomeRouterIP func() (netip.Addr, netip.Addr, bool)
 
-// For debugging the new behaviour where likelyHomeRouterIP can return the
-// "self" IP; should remove after we're confidant this won't cause issues.
-var disableLikelyHomeRouterIPSelf = envknob.RegisterBool("TS_DEBUG_DISABLE_LIKELY_HOME_ROUTER_IP_SELF")
-
 // LikelyHomeRouterIP returns the likely IP of the residential router,
 // which will always be an IPv4 private address, if found.
 // In addition, it returns the IP address of the current machine on
@@ -718,9 +708,6 @@ func LikelyHomeRouterIP() (gateway, myIP netip.Addr, ok bool) {
 	// If the platform-specific implementation returned a valid myIP, then
 	// we can return it as-is without needing to iterate through all
 	// interface addresses.
-	if disableLikelyHomeRouterIPSelf() {
-		myIP = netip.Addr{}
-	}
 	if myIP.IsValid() {
 		return
 	}

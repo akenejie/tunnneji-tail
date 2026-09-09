@@ -12,12 +12,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"tailscale.com/envknob"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/net/netmon"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/logger"
 	"tailscale.com/types/netmap"
+	"tailscale.com/types/opt"
 	"tailscale.com/util/clientmetric"
 	"tailscale.com/util/mak"
 )
@@ -28,17 +28,10 @@ var (
 )
 
 // DebugForceClientSideReachabilityRoutecheck reports whether routecheck should be forced on or off.
-// If the TS_DEBUG_FORCE_CLIENT_SIDE_REACHABILITY_ROUTECHECK environment variable is true,
-// then routecheck is forced on. If it is false, then routecheck is forced off.
-// If unset, then the client respects the client-side-reachability and
-// client-side-reachability-routecheck node attributes.
-var DebugForceClientSideReachabilityRoutecheck = envknob.RegisterOptBool("TS_DEBUG_FORCE_CLIENT_SIDE_REACHABILITY_ROUTECHECK")
+var DebugForceClientSideReachabilityRoutecheck = opt.Bool("")
 
 // IsEnabled reports whether routecheck probing has been enabled for this client.
 func IsEnabled(self tailcfg.NodeView) bool {
-	if v, ok := DebugForceClientSideReachabilityRoutecheck().Get(); ok {
-		return v // forced
-	}
 	if !self.Valid() {
 		return false
 	}

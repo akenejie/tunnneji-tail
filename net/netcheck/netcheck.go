@@ -25,7 +25,6 @@ import (
 
 	"tailscale.com/derp"
 	"tailscale.com/derp/derphttp"
-	"tailscale.com/envknob"
 	"tailscale.com/feature"
 	"tailscale.com/feature/buildfeatures"
 	"tailscale.com/hostinfo"
@@ -46,11 +45,6 @@ import (
 	"tailscale.com/util/clientmetric"
 	"tailscale.com/util/mak"
 	"tailscale.com/util/testenv"
-)
-
-// Debugging and experimentation tweakables.
-var (
-	debugNetcheck = envknob.RegisterBool("TS_DEBUG_NETCHECK")
 )
 
 // The various default timeouts for things.
@@ -274,7 +268,7 @@ func (c *Client) logf(format string, a ...any) {
 }
 
 func (c *Client) vlogf(format string, a ...any) {
-	if c.Verbose || debugNetcheck() {
+	if c.Verbose {
 		c.logf(format, a...)
 	}
 }

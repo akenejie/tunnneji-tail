@@ -27,7 +27,6 @@ import (
 	"time"
 
 	"tailscale.com/derp/derpconst"
-	"tailscale.com/envknob"
 	"tailscale.com/feature/buildfeatures"
 	"tailscale.com/health"
 	"tailscale.com/hostinfo"
@@ -36,8 +35,6 @@ import (
 )
 
 var counterFallbackOK int32 // atomic
-
-var debug = envknob.RegisterBool("TS_DEBUG_TLS_DIAL")
 
 // tlsdialWarningPrinted tracks whether we've printed a warning about a given
 // hostname already, to avoid log spam for users with custom DERP servers,
@@ -173,10 +170,7 @@ func Config(ht *health.Tracker, base *tls.Config) *tls.Config {
 			opts.Intermediates.AddCert(cert)
 		}
 		_, errSys := cs.PeerCertificates[0].Verify(opts)
-		if debug() {
-			log.Printf("tlsdial(sys %q): %v", dialedHost, errSys)
-		}
-		if errSys == nil && !debug() {
+		if errSys == nil {
 			return nil
 		}
 
@@ -185,9 +179,6 @@ func Config(ht *health.Tracker, base *tls.Config) *tls.Config {
 		if extraRoots != nil {
 			opts.Roots = extraRoots
 			_, errExtra := cs.PeerCertificates[0].Verify(opts)
-			if debug() {
-				log.Printf("tlsdial(extra %q): %v", dialedHost, errExtra)
-			}
 			if errExtra == nil {
 				atomic.AddInt32(&counterFallbackOK, 1)
 				return nil
@@ -199,13 +190,11 @@ func Config(ht *health.Tracker, base *tls.Config) *tls.Config {
 			return errSys
 		}
 
-		// If we have baked-in LetsEncrypt roots and we either failed above, or
-		// debug logging is enabled, also verify with LetsEncrypt.
+		// If we have baked-in LetsEncrypt roots and we either failed above,
+		// also verify with LetsEncrypt.
 		opts.Roots = bakedroots.Get()
 		_, bakedErr := cs.PeerCertificates[0].Verify(opts)
-		if debug() {
-			log.Printf("tlsdial(bake %q): %v", dialedHost, bakedErr)
-		} else if bakedErr != nil {
+		if bakedErr != nil {
 			if _, loaded := tlsdialWarningPrinted.LoadOrStore(dialedHost, true); !loaded {
 				if errSys != nil {
 					if extraRoots != nil {
@@ -277,18 +266,12 @@ func SetConfigExpectedCert(c *tls.Config, certDNSName string) {
 			opts.Intermediates.AddCert(cert)
 		}
 		_, errSys := certs[0].Verify(opts)
-		if debug() {
-			log.Printf("tlsdial(sys %q/%q): %v", c.ServerName, certDNSName, errSys)
-		}
 		if errSys == nil {
 			return nil
 		}
 		if extraRoots != nil {
 			opts.Roots = extraRoots
 			_, errExtra := certs[0].Verify(opts)
-			if debug() {
-				log.Printf("tlsdial(extra %q/%q): %v", c.ServerName, certDNSName, errExtra)
-			}
 			if errExtra == nil {
 				return nil
 			}
@@ -299,9 +282,6 @@ func SetConfigExpectedCert(c *tls.Config, certDNSName string) {
 		}
 		opts.Roots = bakedroots.Get()
 		_, err := certs[0].Verify(opts)
-		if debug() {
-			log.Printf("tlsdial(bake %q/%q): %v", c.ServerName, certDNSName, err)
-		}
 		if err == nil {
 			return nil
 		}

@@ -3,10 +3,6 @@
 
 package tstun
 
-import (
-	"tailscale.com/envknob"
-)
-
 // The MTU (Maximum Transmission Unit) of a network interface is the largest
 // packet that can be sent or received through that interface, including all
 // headers above the link layer (e.g. IP headers, UDP headers, Wireguard
@@ -23,9 +19,8 @@ import (
 // at any time via the OS's tools (ifconfig, ip, etc.).
 //
 // User configured initial MTU: The MTU the tailscale TUN should be created
-// with, set by the user via TS_DEBUG_MTU. It should be adjusted down from the
-// underlying interface MTU by 80 bytes to make room for the wireguard
-// headers. This envknob is mostly for debugging. This value is used once at TUN
+// with. It should be adjusted down from the underlying interface MTU by 80
+// bytes to make room for the wireguard headers. This value is used once at TUN
 // creation and ignored thereafter.
 //
 // User configured current MTU: The MTU set via the OS's tools (ifconfig, ip,
@@ -43,21 +38,14 @@ import (
 // Peer MTU: This is the path MTU to a peer's current best endpoint. It defaults
 // to the Safe MTU unless we have path MTU probe results that tell us otherwise.
 //
-// Initial MTU: This is the MTU tailscaled creates the TUN with. In order of
-// priority, it is:
-//
-// 1. If set, the value of TS_DEBUG_MTU clamped to a maximum of 65536
-// 2. If TS_DEBUG_ENABLE_PMTUD is set, the maximum size MTU we probe, minus wg
-//    overhead
-// 3. If TS_DEBUG_ENABLE_PMTUD is not set, the Safe MTU
+// Initial MTU: This is the MTU tailscaled creates the TUN with. It is set to
+// the Safe MTU.
 //
 // Current MTU: This the MTU of the tailscale TUN at any given moment
 // after TUN creation. In order of priority, it is:
 //
 // 1. The MTU set by the user via the OS, if it has ever been set
-// 2. If TS_DEBUG_ENABLE_PMTUD is set, the maximum size MTU we probe, minus wg
-//    overhead
-// 4. If TS_DEBUG_ENABLE_PMTUD is not set, the Safe MTU
+// 2. The Safe MTU
 
 // TUNMTU is the MTU for the tailscale TUN.
 type TUNMTU uint32
@@ -126,25 +114,7 @@ func WireToTUNMTU(w WireMTU) TUNMTU {
 // DefaultTUNMTU returns the MTU we use to set the Tailscale TUN
 // MTU. It is also the path MTU that we default to if we have no
 // information about the path to a peer.
-//
-// 1. If set, the value of TS_DEBUG_MTU clamped to a maximum of MaxTUNMTU
-// 2. If TS_DEBUG_ENABLE_PMTUD is set, the maximum size MTU we probe, minus wg overhead
-// 3. If TS_DEBUG_ENABLE_PMTUD is not set, the Safe MTU
 func DefaultTUNMTU() TUNMTU {
-	if m, ok := envknob.LookupUintSized("TS_DEBUG_MTU", 10, 32); ok {
-		return min(TUNMTU(m), maxTUNMTU)
-	}
-
-	debugPMTUD, _ := envknob.LookupBool("TS_DEBUG_ENABLE_PMTUD")
-	if debugPMTUD {
-		// TODO: While we are just probing MTU but not generating PTB,
-		// this has to continue to return the safe MTU. When we add the
-		// code to generate PTB, this will be:
-		//
-		// return WireToTUNMTU(maxProbedWireMTU)
-		return safeTUNMTU
-	}
-
 	return safeTUNMTU
 }
 

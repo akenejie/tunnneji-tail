@@ -31,7 +31,6 @@ import (
 	"go4.org/mem"
 	"tailscale.com/derp"
 	"tailscale.com/derp/derpconst"
-	"tailscale.com/envknob"
 	"tailscale.com/feature"
 	"tailscale.com/feature/buildfeatures"
 	"tailscale.com/health"
@@ -245,10 +244,6 @@ func urlPort(u *url.URL) string {
 	return ""
 }
 
-// debugDERPUseHTTP tells clients to connect to DERP via HTTP on port
-// 3340 instead of HTTPS on 443.
-var debugUseDERPHTTP = envknob.RegisterBool("TS_DEBUG_USE_DERP_HTTP")
-
 func (c *Client) targetString(reg *tailcfg.DERPRegion) string {
 	if c.url != nil {
 		return c.url.String()
@@ -258,9 +253,6 @@ func (c *Client) targetString(reg *tailcfg.DERPRegion) string {
 
 func (c *Client) useHTTPS() bool {
 	if c.url != nil && c.url.Scheme == "http" {
-		return false
-	}
-	if debugUseDERPHTTP() {
 		return false
 	}
 
@@ -281,10 +273,6 @@ func (c *Client) urlString(node *tailcfg.DERPNode) string {
 	}
 	proto := "https"
 	defaultPort := 443
-	if debugUseDERPHTTP() {
-		proto = "http"
-		defaultPort = 80
-	}
 	host := node.HostName
 	if node.DERPPort != 0 && node.DERPPort != defaultPort {
 		host = net.JoinHostPort(host, fmt.Sprint(node.DERPPort))
@@ -329,7 +317,7 @@ func useWebsockets() bool {
 		return true
 	}
 	if dialWebsocketFunc != nil {
-		return envknob.Bool("TS_DEBUG_DERP_WS_CLIENT")
+		return false
 	}
 	return false
 }

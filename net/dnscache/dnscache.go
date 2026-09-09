@@ -19,7 +19,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"tailscale.com/envknob"
 	"tailscale.com/net/netx"
 	"tailscale.com/syncs"
 	"tailscale.com/types/logger"
@@ -122,16 +121,15 @@ func (r *Resolver) fwd() *net.Resolver {
 	return net.DefaultResolver
 }
 
-// dlogf logs a debug message if debug logging is enabled either globally via
-// the TS_DEBUG_DNS_CACHE environment variable or via the per-Resolver
-// configuration.
+// dlogf logs a debug message if debug logging is enabled globally via
+// [SetDebugLoggingEnabled].
 func (r *Resolver) dlogf(format string, args ...any) {
 	logf := r.Logf
 	if logf == nil {
 		logf = log.Printf
 	}
 
-	if debug() || debugLogging.Load() {
+	if debugLogging.Load() {
 		logf("dnscache: "+format, args...)
 	}
 }
@@ -163,11 +161,8 @@ func (r *Resolver) ttl() time.Duration {
 	return 10 * time.Minute
 }
 
-var debug = envknob.RegisterBool("TS_DEBUG_DNS_CACHE")
-
 // debugLogging allows enabling debug logging at runtime, via
 // SetDebugLoggingEnabled.
-//
 // This is a global variable instead of a per-Resolver variable because we
 // create new Resolvers throughout the lifetime of the program (e.g. on every
 // new Direct client, etc.). When we enable debug logs, though, we want to do
@@ -179,9 +174,8 @@ var debugLogging atomic.Bool
 // SetDebugLoggingEnabled controls whether debug logging is enabled for this
 // package.
 //
-// These logs are also printed when the TS_DEBUG_DNS_CACHE envknob is set, but
-// we allow configuring this manually as well so that it can be changed at
-// runtime.
+// These logs are enabled by default; this allows configuring the behavior at
+// runtime so that it can be changed after the package has started.
 func SetDebugLoggingEnabled(v bool) {
 	debugLogging.Store(v)
 }

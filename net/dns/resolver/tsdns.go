@@ -24,7 +24,6 @@ import (
 
 	dns "golang.org/x/net/dns/dnsmessage"
 	"tailscale.com/control/controlknobs"
-	"tailscale.com/envknob"
 	"tailscale.com/feature"
 	"tailscale.com/feature/buildfeatures"
 	"tailscale.com/health"
@@ -472,8 +471,6 @@ func (r *Resolver) HandlePeerDNSQuery(ctx context.Context, q []byte, from netip.
 	}
 }
 
-var debugExitNodeDNSNetPkg = envknob.RegisterBool("TS_DEBUG_EXIT_NODE_DNS_NET_PKG")
-
 // handleExitNodeDNSQueryWithNetPkg takes a DNS query message in q and
 // return a reply (for the ExitDNS DoH service) using the net package's
 // native APIs.
@@ -499,16 +496,10 @@ func handleExitNodeDNSQueryWithNetPkg(ctx context.Context, logf logger.Logf, res
 
 	handleError := func(err error) (res []byte, _ error) {
 		if isGoNoSuchHostError(err) {
-			if debugExitNodeDNSNetPkg() {
-				logf(`converting Go "no such host" error to a NXDOMAIN: %v`, err)
-			}
 			resp.Header.RCode = dns.RCodeNameError
 			return marshalResponse(resp)
 		}
 
-		if debugExitNodeDNSNetPkg() {
-			logf("returning error: %v", err)
-		}
 		// TODO: map other errors to RCodeServerFailure?
 		// Or I guess our caller should do that?
 		return nil, err
@@ -522,9 +513,6 @@ func handleExitNodeDNSQueryWithNetPkg(ctx context.Context, logf logger.Logf, res
 		if resp.Question.Type == dns.TypeAAAA {
 			network = "ip6"
 		}
-		if debugExitNodeDNSNetPkg() {
-			logf("resolving %s %q", network, name)
-		}
 		ips, err := r.LookupIP(ctx, network, name)
 		if err != nil {
 			return handleError(err)
@@ -535,9 +523,6 @@ func handleExitNodeDNSQueryWithNetPkg(ctx context.Context, logf logger.Logf, res
 			}
 		}
 	case dns.TypeTXT:
-		if debugExitNodeDNSNetPkg() {
-			logf("resolving TXT %q", name)
-		}
 		strs, err := r.LookupTXT(ctx, name)
 		if err != nil {
 			return handleError(err)
@@ -549,9 +534,6 @@ func handleExitNodeDNSQueryWithNetPkg(ctx context.Context, logf logger.Logf, res
 			// TODO: is this RCodeFormatError?
 			return nil, errors.New("bogus PTR name")
 		}
-		if debugExitNodeDNSNetPkg() {
-			logf("resolving PTR %q", ipStr)
-		}
 		addrs, err := r.LookupAddr(ctx, ipStr)
 		if err != nil {
 			return handleError(err)
@@ -560,18 +542,12 @@ func handleExitNodeDNSQueryWithNetPkg(ctx context.Context, logf logger.Logf, res
 			resp.Name, _ = dnsname.ToFQDN(addrs[0])
 		}
 	case dns.TypeCNAME:
-		if debugExitNodeDNSNetPkg() {
-			logf("resolving CNAME %q", name)
-		}
 		cname, err := r.LookupCNAME(ctx, name)
 		if err != nil {
 			return handleError(err)
 		}
 		resp.CNAME = cname
 	case dns.TypeSRV:
-		if debugExitNodeDNSNetPkg() {
-			logf("resolving SRV %q", name)
-		}
 		// Thanks, Go: "To accommodate services publishing SRV
 		// records under non-standard names, if both service
 		// and proto are empty strings, LookupSRV looks up
@@ -582,9 +558,6 @@ func handleExitNodeDNSQueryWithNetPkg(ctx context.Context, logf logger.Logf, res
 		}
 		resp.SRVs = srvs
 	case dns.TypeNS:
-		if debugExitNodeDNSNetPkg() {
-			logf("resolving NS %q", name)
-		}
 		nss, err := r.LookupNS(ctx, name)
 		if err != nil {
 			return handleError(err)

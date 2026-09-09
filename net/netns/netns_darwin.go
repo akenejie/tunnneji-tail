@@ -17,7 +17,6 @@ import (
 
 	"golang.org/x/net/route"
 	"golang.org/x/sys/unix"
-	"tailscale.com/envknob"
 	"tailscale.com/net/netmon"
 	"tailscale.com/net/tsaddr"
 	"tailscale.com/types/logger"
@@ -29,8 +28,6 @@ func control(logf logger.Logf, netMon *netmon.Monitor) func(network, address str
 		return controlLogf(logf, netMon, network, address, c)
 	}
 }
-
-var bindToInterfaceByRouteEnv = envknob.RegisterBool("TS_BIND_TO_INTERFACE_BY_ROUTE")
 
 var errInterfaceStateInvalid = errors.New("interface state invalid")
 
@@ -109,8 +106,7 @@ func getInterfaceIndex(logf logger.Logf, netMon *netmon.Monitor, address string)
 		return idx, errOut
 	}
 
-	useRoute := bindToInterfaceByRoute.Load() || bindToInterfaceByRouteEnv()
-	if !useRoute {
+	if !bindToInterfaceByRoute.Load() {
 		return defaultIdx()
 	}
 

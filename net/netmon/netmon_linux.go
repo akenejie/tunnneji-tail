@@ -13,13 +13,10 @@ import (
 	"github.com/jsimonetti/rtnetlink"
 	"github.com/mdlayher/netlink"
 	"golang.org/x/sys/unix"
-	"tailscale.com/envknob"
 	"tailscale.com/net/tsaddr"
 	"tailscale.com/types/logger"
 	"tailscale.com/util/eventbus"
 )
-
-var debugNetlinkMessages = envknob.RegisterBool("TS_DEBUG_NETLINK")
 
 // unspecifiedMessage is a minimal message implementation that should not
 // be ignored. In general, OS-specific implementations should use better
@@ -114,24 +111,6 @@ func (c *nlConn) Receive() (message, error) {
 
 		nip := netaddrIP(rmsg.Attributes.Address)
 
-		if debugNetlinkMessages() {
-			typ := "RTM_NEWADDR"
-			if msg.Header.Type == unix.RTM_DELADDR {
-				typ = "RTM_DELADDR"
-			}
-
-			// label attributes are seemingly only populated for IPv4 addresses in the wild.
-			label := rmsg.Attributes.Label
-			if label == "" {
-				itf, err := net.InterfaceByIndex(int(rmsg.Index))
-				if err == nil {
-					label = itf.Name
-				}
-			}
-
-			c.logf("%s: %s(%d) %s / %s", typ, label, rmsg.Index, rmsg.Attributes.Address, rmsg.Attributes.Local)
-		}
-
 		addrs := c.addrCache[rmsg.Index]
 
 		// Ignore duplicate RTM_NEWADDR messages using c.addrCache to
@@ -143,9 +122,6 @@ func (c *nlConn) Receive() (message, error) {
 			}
 
 			if addrs[nip] {
-				if debugNetlinkMessages() {
-					c.logf("ignored duplicate RTM_NEWADDR for %s", nip)
-				}
 				return ignoreMessage{}, nil
 			}
 
@@ -165,9 +141,6 @@ func (c *nlConn) Receive() (message, error) {
 			Addr:    nip,
 			Delete:  msg.Header.Type == unix.RTM_DELADDR,
 		}
-		if debugNetlinkMessages() {
-			c.logf("%+v", nam)
-		}
 		return nam, nil
 	case unix.RTM_NEWROUTE, unix.RTM_DELROUTE:
 		typeStr := "RTM_NEWROUTE"
@@ -186,10 +159,6 @@ func (c *nlConn) Receive() (message, error) {
 		if msg.Header.Type == unix.RTM_NEWROUTE &&
 			(rmsg.Attributes.Table == 255 || rmsg.Attributes.Table == 254) &&
 			(dst.Addr().IsMulticast() || dst.Addr().IsLinkLocalUnicast()) {
-
-			if debugNetlinkMessages() {
-				c.logf("%s ignored", typeStr)
-			}
 
 			// Normal Linux route changes on new interface coming up; don't log or react.
 			return ignoreMessage{}, nil
@@ -220,9 +189,6 @@ func (c *nlConn) Receive() (message, error) {
 			Dst:     dst,
 			Gateway: gw,
 		}
-		if debugNetlinkMessages() {
-			c.logf("%+v", nrm)
-		}
 		return nrm, nil
 	case unix.RTM_NEWRULE:
 		// Probably ourselves adding it.
@@ -244,9 +210,6 @@ func (c *nlConn) Receive() (message, error) {
 			Priority: rmsg.Attributes.Priority,
 		}
 		c.rulesDeleted.Publish(rd)
-		if debugNetlinkMessages() {
-			c.logf("%+v", rd)
-		}
 		return ignoreMessage{}, nil
 	case unix.RTM_NEWLINK, unix.RTM_DELLINK:
 		// This is an unhandled message, but don't print an error.

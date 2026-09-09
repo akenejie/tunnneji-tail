@@ -1195,7 +1195,7 @@ func (de *endpoint) discoPingTimeout(txid stun.TxID) {
 	if sp.to == de.bestAddr.epAddr && bestUntrusted {
 		de.clearBestAddrLocked()
 	}
-	if debugDisco() || !de.bestAddr.ap.IsValid() || bestUntrusted {
+	if !de.bestAddr.ap.IsValid() || bestUntrusted {
 		de.c.dlogf("[v1] magicsock: disco: timeout waiting for pong %x from %v (%v, %v)", txid[:6], sp.to, de.publicKey.ShortString(), de.discoShort())
 	}
 	de.removeSentDiscoPingLocked(txid, sp, discoPingTimedOut)
@@ -1300,9 +1300,6 @@ func (de *endpoint) startDiscoPingLocked(ep epAddr, now mono.Time, purpose disco
 	if runtime.GOOS == "js" {
 		return
 	}
-	if debugNeverDirectUDP() && !ep.vni.IsSet() && ep.ap.Addr() != tailcfg.DerpMagicIPAddr {
-		return
-	}
 	epDisco := de.disco.Load()
 	if epDisco == nil {
 		return
@@ -1365,9 +1362,6 @@ func (de *endpoint) startDiscoPingLocked(ep epAddr, now mono.Time, purpose disco
 // sendDiscoPingsLocked starts pinging all of ep's direct endpoints.
 // Sibling of discoverUDPRelayPathsLocked for udprelay.
 func (de *endpoint) sendDiscoPingsLocked(now mono.Time, sendCallMeMaybe bool) {
-	if debugNeverDirectUDP() {
-		return // skip when direct UDP is disabled
-	}
 	de.lastFullPing = now
 	var sentAny bool
 	for ep, st := range de.endpointState {

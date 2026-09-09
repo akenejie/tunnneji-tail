@@ -25,7 +25,6 @@ import (
 	"golang.zx2c4.com/wireguard/windows/tunnel/winipcfg"
 	"tailscale.com/atomicfile"
 	"tailscale.com/control/controlknobs"
-	"tailscale.com/envknob"
 	"tailscale.com/health"
 	"tailscale.com/syncs"
 	"tailscale.com/types/logger"
@@ -41,8 +40,6 @@ import (
 const (
 	versionKey = `SOFTWARE\Microsoft\Windows NT\CurrentVersion`
 )
-
-var configureWSL = envknob.RegisterBool("TS_DEBUG_CONFIGURE_WSL")
 
 type windowsManager struct {
 	logf       logger.Logf
@@ -492,18 +489,6 @@ func (m *windowsManager) SetDNS(cfg OSConfig) error {
 			m.logf("ran ipconfig /flushdns in %v", d)
 		}
 	}()
-
-	// On initial setup of WSL, the restart caused by --shutdown is slow,
-	// so we do it out-of-line.
-	if configureWSL() {
-		go func() {
-			if err := m.wslManager.SetDNS(cfg); err != nil {
-				m.logf("WSL SetDNS: %v", err) // continue
-			} else {
-				m.logf("WSL SetDNS: success")
-			}
-		}()
-	}
 
 	return nil
 }

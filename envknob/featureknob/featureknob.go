@@ -2,14 +2,13 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 // Package featureknob provides a facility to control whether features
-// can run based on either an envknob or running OS / distro.
+// can run based on the running OS / distro.
 package featureknob
 
 import (
 	"errors"
 	"runtime"
 
-	"tailscale.com/envknob"
 	"tailscale.com/version"
 	"tailscale.com/version/distro"
 )
@@ -19,10 +18,10 @@ import (
 func CanRunTailscaleSSH() error {
 	switch runtime.GOOS {
 	case "linux":
-		if distro.Get() == distro.Synology && !envknob.UseWIPCode() {
+		if distro.Get() == distro.Synology {
 			return errors.New("The Tailscale SSH server does not run on Synology.")
 		}
-		if distro.Get() == distro.QNAP && !envknob.UseWIPCode() {
+		if distro.Get() == distro.QNAP {
 			return errors.New("The Tailscale SSH server does not run on QNAP.")
 		}
 		// otherwise okay
@@ -34,9 +33,6 @@ func CanRunTailscaleSSH() error {
 	case "freebsd", "openbsd", "plan9":
 	default:
 		return errors.New("The Tailscale SSH server is not supported on " + runtime.GOOS)
-	}
-	if !envknob.CanSSHD() {
-		return errors.New("The Tailscale SSH server has been administratively disabled.")
 	}
 	return nil
 }

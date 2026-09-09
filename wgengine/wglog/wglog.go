@@ -10,7 +10,6 @@ import (
 	"sync"
 
 	"github.com/tailscale/wireguard-go/device"
-	"tailscale.com/envknob"
 	"tailscale.com/types/logger"
 	"tailscale.com/util/mak"
 )
@@ -101,9 +100,6 @@ func NewLogger(logf logger.Logf, lookup func(wgString string) (tsString string, 
 			return
 		}
 		logf(format, newargs...)
-	}
-	if envknob.Bool("TS_DEBUG_RAW_WGLOG") {
-		wrapper = logf
 	}
 	ret.DeviceLogger = &device.Logger{
 		Verbosef: logger.WithPrefix(wrapper, prefix+"[v2] "),

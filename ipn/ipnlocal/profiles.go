@@ -14,7 +14,6 @@ import (
 	"slices"
 	"strings"
 
-	"tailscale.com/envknob"
 	"tailscale.com/feature"
 	"tailscale.com/health"
 	"tailscale.com/ipn"
@@ -28,8 +27,6 @@ import (
 	"tailscale.com/util/eventbus"
 	"tailscale.com/util/testenv"
 )
-
-var debug = envknob.RegisterBool("TS_DEBUG_PROFILES")
 
 // [profileManager] implements [ipnext.ProfileStore].
 var _ ipnext.ProfileStore = (*profileManager)(nil)
@@ -76,13 +73,6 @@ type profileManager struct {
 func (pm *profileManager) SetExtensionHost(host *ExtensionHost) {
 	pm.extHost = host
 	host.NotifyProfileChange(pm.currentProfile, pm.prefs, false)
-}
-
-func (pm *profileManager) dlogf(format string, args ...any) {
-	if !debug() {
-		return
-	}
-	pm.logf(format, args...)
 }
 
 func (pm *profileManager) WriteState(id ipn.StateKey, val []byte) error {
@@ -206,7 +196,6 @@ func (pm *profileManager) DefaultUserProfile(uid ipn.WindowsUserID) ipn.LoginPro
 	// Read the CurrentProfileKey from the store which stores
 	// the selected profile for the specified user.
 	b, err := pm.store.ReadState(ipn.CurrentProfileKey(string(uid)))
-	pm.dlogf("DefaultUserProfile: ReadState(%q) = %v, %v", string(uid), len(b), err)
 	if err == ipn.ErrStateNotExist || len(b) == 0 {
 		return pm.NewProfileForUser(uid)
 	}
@@ -214,7 +203,6 @@ func (pm *profileManager) DefaultUserProfile(uid ipn.WindowsUserID) ipn.LoginPro
 	pk := ipn.StateKey(string(b))
 	prof := pm.findProfileByKey(uid, pk)
 	if !prof.Valid() {
-		pm.dlogf("DefaultUserProfile: no profile found for key: %q", pk)
 		return pm.NewProfileForUser(uid)
 	}
 	return prof
@@ -317,7 +305,6 @@ func (pm *profileManager) findProfileByKey(uid ipn.WindowsUserID, key ipn.StateK
 	}
 	return out[0]
 }
-
 
 // SetPrefs sets the current profile's prefs to the provided value.
 // It also saves the prefs to the [ipn.StateStore]. It stores a copy of the
@@ -868,8 +855,6 @@ func ReadStartupPrefsForTest(logf logger.Logf, store ipn.StateStore) (ipn.PrefsV
 	return pm.CurrentPrefs(), nil
 }
 
-
-
 func readAutoStartKey(store ipn.StateStore) (ipn.StateKey, error) {
 	autoStartKey, err := store.ReadState(ipn.CurrentProfileStateKey)
 	if err != nil && err != ipn.ErrStateNotExist {
@@ -920,7 +905,6 @@ func newProfileManager(store ipn.StateStore, logf logger.Logf, ht *health.Tracke
 	if stateKey != "" {
 		initialProfile = pm.findProfileByKey("", stateKey)
 	} else if len(knownProfiles) == 0 {
-		pm.dlogf("no known profiles; trying to migrate from legacy prefs")
 		if initialProfile, err = pm.migrateFromLegacyPrefs(pm.currentUserID); err != nil {
 
 		}
@@ -945,14 +929,12 @@ func (pm *profileManager) migrateFromLegacyPrefs(uid ipn.WindowsUserID) (ipn.Log
 		metricMigrationError.Add(1)
 		return ipn.LoginProfileView{}, fmt.Errorf("load legacy prefs: %w", err)
 	}
-	pm.dlogf("loaded legacy preferences; sentinel=%q", sentinel)
 	profile, err := pm.setProfilePrefs(&ipn.LoginProfile{LocalUserID: uid}, prefs, ipn.NetworkProfile{})
 	if err != nil {
 		metricMigrationError.Add(1)
 		return ipn.LoginProfileView{}, fmt.Errorf("migrating _daemon profile: %w", err)
 	}
 	pm.completeMigration(sentinel)
-	pm.dlogf("completed legacy preferences migration with sentinel=%q", sentinel)
 	metricMigrationSuccess.Add(1)
 	return profile, nil
 }

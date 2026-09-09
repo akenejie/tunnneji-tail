@@ -16,25 +16,22 @@ import (
 	"gvisor.dev/gvisor/pkg/tcpip/checksum"
 	"gvisor.dev/gvisor/pkg/tcpip/header"
 	"tailscale.com/control/controlknobs"
-	"tailscale.com/envknob"
 	"tailscale.com/net/tsaddr"
 )
 
-// SetLinkFeaturesPostUp configures link features on t based on select TS_TUN_
-// environment variables, control-plane node attributes (via knobs, which may be
-// nil), and OS feature tests. Callers should ensure t is up prior to calling,
-// otherwise OS feature tests may be inconclusive.
+// SetLinkFeaturesPostUp configures link features on t based on control-plane
+// node attributes (via knobs, which may be nil), and OS feature tests. Callers
+// should ensure t is up prior to calling, otherwise OS feature tests may be
+// inconclusive.
 func (t *Wrapper) SetLinkFeaturesPostUp(knobs *controlknobs.Knobs) {
 	if t.isTAP || runtime.GOOS == "android" {
 		return
 	}
 	if groDev, ok := t.tdev.(tun.GRODevice); ok {
-		if envknob.Bool("TS_TUN_DISABLE_UDP_GRO") ||
-			(knobs != nil && knobs.DisableTUNUDPGRO.Load()) {
+		if knobs != nil && knobs.DisableTUNUDPGRO.Load() {
 			groDev.DisableUDPGRO()
 		}
-		if envknob.Bool("TS_TUN_DISABLE_TCP_GRO") ||
-			(knobs != nil && knobs.DisableTUNTCPGRO.Load()) {
+		if knobs != nil && knobs.DisableTUNTCPGRO.Load() {
 			groDev.DisableTCPGRO()
 		}
 		err := probeTCPGRO(groDev)

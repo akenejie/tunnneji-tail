@@ -21,7 +21,6 @@ import (
 	"golang.org/x/net/ipv6"
 	"golang.org/x/sys/unix"
 	"tailscale.com/control/controlknobs"
-	"tailscale.com/envknob"
 	"tailscale.com/hostinfo"
 	"tailscale.com/net/neterror"
 	"tailscale.com/net/packet"
@@ -512,10 +511,8 @@ func tryEnableRXQOverflowsCounter(pconn nettype.PacketConn) (enabled bool) {
 // is non-nil, UDP GSO and/or UDP GRO may be disabled via control-plane node
 // attributes.
 func tryEnableUDPOffload(pconn nettype.PacketConn, knobs *controlknobs.Knobs) (hasTX bool, hasRX bool) {
-	disableGSO := envknob.Bool("TS_DEBUG_DISABLE_UDP_GSO") ||
-		(knobs != nil && knobs.DisableUDPGSO.Load())
-	disableGRO := envknob.Bool("TS_DEBUG_DISABLE_UDP_GRO") ||
-		(knobs != nil && knobs.DisableUDPGRO.Load())
+	disableGSO := knobs != nil && knobs.DisableUDPGSO.Load()
+	disableGRO := knobs != nil && knobs.DisableUDPGRO.Load()
 	if c, ok := pconn.(*net.UDPConn); ok {
 		rc, err := c.SyscallConn()
 		if err != nil {

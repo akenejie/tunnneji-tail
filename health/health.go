@@ -18,7 +18,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"tailscale.com/envknob"
 	"tailscale.com/feature/buildfeatures"
 	"tailscale.com/syncs"
 	"tailscale.com/tailcfg"
@@ -1097,8 +1096,6 @@ func (t *Tracker) multiErrLocked() error {
 	return errors.Join(errs...)
 }
 
-var fakeErrForTesting = envknob.RegisterString("TS_DEBUG_FAKE_HEALTH_ERROR")
-
 // updateBuiltinWarnablesLocked performs a number of checks on the state of the backend,
 // and adds/removes Warnings from the Tracker as needed.
 func (t *Tracker) updateBuiltinWarnablesLocked() {
@@ -1266,13 +1263,7 @@ func (t *Tracker) updateBuiltinWarnablesLocked() {
 		t.notifyWatchersControlChangedLocked()
 	}
 
-	if err := envknob.ApplyDiskConfigError(); err != nil {
-		t.setUnhealthyLocked(applyDiskConfigWarnable, Args{
-			ArgError: err.Error(),
-		})
-	} else {
-		t.setHealthyLocked(applyDiskConfigWarnable)
-	}
+	t.setHealthyLocked(applyDiskConfigWarnable)
 
 	if len(t.tlsConnectionErrors) > 0 {
 		for serverName, err := range t.tlsConnectionErrors {
@@ -1285,13 +1276,7 @@ func (t *Tracker) updateBuiltinWarnablesLocked() {
 		t.setHealthyLocked(tlsConnectionFailedWarnable)
 	}
 
-	if e := fakeErrForTesting(); len(t.warnables) == 0 && e != "" {
-		t.setUnhealthyLocked(testWarnable, Args{
-			ArgError: e,
-		})
-	} else {
-		t.setHealthyLocked(testWarnable)
-	}
+	t.setHealthyLocked(testWarnable)
 }
 
 // updateWarmingUpWarnableLocked ensures the warmingUpWarnable is healthy if wantRunning has been set to true

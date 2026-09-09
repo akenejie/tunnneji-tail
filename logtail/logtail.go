@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"io"
 	"iter"
-	"log"
 	mrand "math/rand/v2"
 	"net/http"
 	"os"
@@ -30,7 +29,6 @@ import (
 	"github.com/creachadair/msync/trigger"
 	jsonv2 "github.com/go-json-experiment/json"
 	"github.com/go-json-experiment/json/jsontext"
-	"tailscale.com/envknob"
 	"tailscale.com/metrics"
 	"tailscale.com/net/netmon"
 	"tailscale.com/net/sockstats"
@@ -93,16 +91,6 @@ func newLogger(cfg Config) *Logger {
 			procID = 7
 		}
 	}
-	if s := envknob.String("TS_DEBUG_LOGTAIL_FLUSHDELAY"); s != "" {
-		if delay, err := time.ParseDuration(s); err == nil {
-			cfg.FlushDelayFn = func() time.Duration { return delay }
-		} else {
-			log.Fatalf("invalid TS_DEBUG_LOGTAIL_FLUSHDELAY: %v", err)
-		}
-	} else if cfg.FlushDelayFn == nil && envknob.Bool("IN_TS_TEST") {
-		cfg.FlushDelayFn = func() time.Duration { return 0 }
-	}
-
 	var urlSuffix string
 	if !cfg.CopyPrivateID.IsZero() {
 		urlSuffix = "?copyId=" + cfg.CopyPrivateID.String()
@@ -151,9 +139,6 @@ func NewLogger(cfg Config, logf tslogger.Logf) *Logger {
 	logger.uploadCancel = cancel
 
 	go logger.uploading(ctx)
-	if envknob.Bool("TS_DEBUG_LOGTAIL") {
-		logger.Write([]byte("logtail started"))
-	}
 	return logger
 }
 
@@ -757,17 +742,10 @@ func (lg *Logger) SetEnabled(enabled bool) {
 	lg.disabled.Store(!enabled)
 }
 
-var debugWakesAndUploads = envknob.RegisterBool("TS_DEBUG_LOGTAIL_WAKES")
-
 // tryDrainWake tries to send to lg.drainWake, to cause an uploading wakeup.
 // It does not block.
 func (lg *Logger) tryDrainWake() {
 	lg.flushPending.Store(false)
-	if debugWakesAndUploads() {
-		// Using println instead of log.Printf here to avoid recursing back into
-		// ourselves.
-		println("logtail: try drain wake, numHTTP:", lg.httpDoCalls.Load())
-	}
 	select {
 	case lg.drainWake <- struct{}{}:
 	default:

@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/netip"
 	"runtime"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,7 +19,6 @@ import (
 	"time"
 
 	"github.com/gaissmai/bart"
-	"tailscale.com/envknob"
 	"tailscale.com/feature"
 	"tailscale.com/feature/buildfeatures"
 	"tailscale.com/net/dnscache"
@@ -452,19 +450,6 @@ func (d *Dialer) userDialResolveAll(ctx context.Context, network, addr string) (
 	if len(out) == 0 {
 		return nil, fmt.Errorf("DNS lookup returned no results for %q", host)
 	}
-	if debugPreferIPv6() {
-		slices.SortStableFunc(out, func(a, b netip.AddrPort) int {
-			a6 := a.Addr().Is6()
-			b6 := b.Addr().Is6()
-			if a6 == b6 {
-				return 0
-			}
-			if a6 {
-				return -1
-			}
-			return 1
-		})
-	}
 	return out, nil
 }
 
@@ -478,12 +463,6 @@ func (d *Dialer) userDialResolve(ctx context.Context, network, addr string) (net
 	}
 	return ipps[0], nil
 }
-
-// debugPreferIPv6 forces userDialResolveAll to sort AAAA results before
-// A results, reproducing the failure mode where a client on an IPv6-capable
-// host picks an unreachable AAAA address through an IPv4-only exit node.
-// Used by TestExitNodeV4Only to exercise the happy-eyeballs fallback.
-var debugPreferIPv6 = envknob.RegisterBool("TS_DEBUG_PREFER_IPV6_USERDIAL")
 
 // ipNetOfNetwork returns "ip", "ip4", or "ip6" corresponding
 // to the input value of "tcp", "tcp4", "udp6" etc network

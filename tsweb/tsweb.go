@@ -29,7 +29,6 @@ import (
 	"time"
 
 	"go4.org/mem"
-	"tailscale.com/envknob"
 	"tailscale.com/metrics"
 	"tailscale.com/net/tsaddr"
 	"tailscale.com/tsweb/varz"
@@ -55,16 +54,9 @@ func IsProd443(addr string) bool {
 	return port == "443" || port == "https"
 }
 
-// debugTrustedCIDRs is the envknob for TS_DEBUG_TRUSTED_CIDRS, a
-// comma-separated list of CIDR ranges (e.g. "10.0.0.0/8,172.16.0.0/12")
-// whose source IPs are allowed to access debug endpoints without Tailscale
-// authentication. This will supersede both IsTailscaleIP() and
-// TS_ALLOW_DEBUG_IP.
-var debugTrustedCIDRs = envknob.RegisterString("TS_DEBUG_TRUSTED_CIDRS")
-
 // trustedCIDRs returns the parsed CIDR prefixes from TS_DEBUG_TRUSTED_CIDRS.
 var trustedCIDRs = sync.OnceValue(func() []netip.Prefix {
-	return parseTrustedCIDRs(debugTrustedCIDRs())
+	return parseTrustedCIDRs("")
 })
 
 // parseTrustedCIDRs parses a comma-separated list of CIDR prefixes.
@@ -117,7 +109,7 @@ func AllowDebugAccess(r *http.Request) bool {
 	if err != nil {
 		return false
 	}
-	if tsaddr.IsTailscaleIP(ip) || ip.IsLoopback() || ipStr == envknob.String("TS_ALLOW_DEBUG_IP") {
+	if tsaddr.IsTailscaleIP(ip) || ip.IsLoopback() || ipStr == "" {
 		return true
 	}
 	if cidrsContain(trustedCIDRs(), ip) {
@@ -131,7 +123,7 @@ func allowDebugAccessWithKey(r *http.Request) bool {
 		return false
 	}
 	urlKey := r.FormValue("debugkey")
-	keyPath := envknob.String("TS_DEBUG_KEY_PATH")
+	keyPath := ""
 	if urlKey != "" && keyPath != "" {
 		slurp, err := os.ReadFile(keyPath)
 		if err == nil && string(bytes.TrimSpace(slurp)) == urlKey {

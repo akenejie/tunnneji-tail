@@ -5,12 +5,7 @@ package routecheck
 
 import (
 	"log"
-
-	"tailscale.com/envknob"
 )
-
-// Debugging tweakable.
-var debugRoutecheck = envknob.RegisterBool("TS_DEBUG_ROUTECHECK")
 
 // Logf calls [Client.Logf] to print to a logger.
 // Arguments are handled in the manner of fmt.Printf.
@@ -23,10 +18,10 @@ func (c *Client) logf(format string, a ...any) {
 }
 
 // Vlogf calls [Client.Logf] to print to a logger, only when in debug mode,
-// which is when the TS_DEBUG_ROUTECHECK environment variable is set.
+// which is when verbose logging is enabled.
 // Arguments are handled in the manner of fmt.Printf.
 func (c *Client) vlogf(format string, a ...any) {
-	if c.Verbose || debugRoutecheck() {
+	if c.Verbose {
 		c.logf(format, a...)
 	}
 }

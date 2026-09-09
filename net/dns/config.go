@@ -15,7 +15,6 @@ import (
 	"sort"
 
 	"tailscale.com/control/controlknobs"
-	"tailscale.com/envknob"
 	"tailscale.com/net/dns/publicdns"
 	"tailscale.com/net/dns/resolver"
 	"tailscale.com/net/tsaddr"
@@ -63,8 +62,6 @@ type Config struct {
 	OnlyIPv6 bool
 }
 
-var magicDNSDualStack = envknob.RegisterBool("TS_DEBUG_MAGIC_DNS_DUAL_STACK")
-
 // serviceIPs returns the list of service IPs where MagicDNS is reachable.
 //
 // The provided knobs may be nil.
@@ -73,9 +70,7 @@ func (c *Config) serviceIPs(knobs *controlknobs.Knobs) []netip.Addr {
 		return []netip.Addr{tsaddr.TailscaleServiceIPv6()}
 	}
 
-	// See https://github.com/tailscale/tailscale/issues/15404 for the background
-	// on the opt-in debug knob and the controlknob opt-out.
-	if magicDNSDualStack() || !knobs.ShouldForceRegisterMagicDNSIPv4Only() {
+	if !knobs.ShouldForceRegisterMagicDNSIPv4Only() {
 		return []netip.Addr{
 			tsaddr.TailscaleServiceIP(),
 			tsaddr.TailscaleServiceIPv6(),

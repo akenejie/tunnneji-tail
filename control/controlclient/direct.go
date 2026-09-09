@@ -31,7 +31,6 @@ import (
 	"go4.org/mem"
 	"tailscale.com/control/controlknobs"
 	"tailscale.com/control/ts2021"
-	"tailscale.com/envknob"
 	"tailscale.com/feature"
 	"tailscale.com/feature/buildfeatures"
 	"tailscale.com/health"
@@ -414,9 +413,6 @@ func NewDirect(opts Options) (*Direct, error) {
 		}
 		c.serverNoiseKey = key.NewMachine().Public() // prevent early error before hitting test client
 	}
-	if strings.Contains(opts.ServerURL, "controlplane.tailscale.com") && envknob.Bool("TS_PANIC_IF_HIT_MAIN_CONTROL") {
-		c.panicOnUse = true
-	}
 
 	c.busClient = opts.Bus.Client("controlClient.direct")
 	c.clientVersionPub = eventbus.Publish[tailcfg.ClientVersion](c.busClient)
@@ -555,9 +551,6 @@ func (c *Direct) TryLogout(ctx context.Context) error {
 }
 
 func (c *Direct) TryLogin(ctx context.Context, flags LoginFlags) (url string, err error) {
-	if strings.Contains(c.serverURL, "controlplane.tailscale.com") && envknob.Bool("TS_PANIC_IF_HIT_MAIN_CONTROL") {
-		panic(fmt.Sprintf("[unexpected] controlclient: TryLogin called on %s; tainted=%v", c.serverURL, c.panicOnUse))
-	}
 	c.logf("[v1] direct.TryLogin(flags=%v)", flags)
 	return c.doLoginOrRegen(ctx, loginOpt{Flags: flags})
 }
@@ -1411,7 +1404,6 @@ func (c *Direct) handleDebugMessage(ctx context.Context, debug *tailcfg.Debug) e
 	}
 	if buildfeatures.HasLogTail && debug.DisableLogTail {
 		logtail.Disable()
-		envknob.SetNoLogsNoSupport()
 	}
 	if sleep := time.Duration(debug.SleepSeconds * float64(time.Second)); sleep > 0 {
 		if err := sleepAsRequested(ctx, c.logf, sleep, c.clock); err != nil {
@@ -1558,15 +1550,14 @@ type devKnobs struct {
 }
 
 func initDevKnob() devKnobs {
-	nm := envknob.RegisterInt("TS_DEBUG_MAP")
 	return devKnobs{
-		DumpNetMaps:        func() bool { return nm() > 0 },
-		DumpNetMapsVerbose: func() bool { return nm() > 1 },
-		DumpRegister:       envknob.RegisterBool("TS_DEBUG_REGISTER"),
-		ForceProxyDNS:      envknob.RegisterBool("TS_DEBUG_PROXY_DNS"),
-		StripEndpoints:     envknob.RegisterBool("TS_DEBUG_STRIP_ENDPOINTS"),
-		StripHomeDERP:      envknob.RegisterBool("TS_DEBUG_STRIP_HOME_DERP"),
-		StripCaps:          envknob.RegisterBool("TS_DEBUG_STRIP_CAPS"),
+		DumpNetMaps:        func() bool { return false },
+		DumpNetMapsVerbose: func() bool { return false },
+		DumpRegister:       func() bool { return false },
+		ForceProxyDNS:      func() bool { return false },
+		StripEndpoints:     func() bool { return false },
+		StripHomeDERP:      func() bool { return false },
+		StripCaps:          func() bool { return false },
 	}
 }
 
@@ -1616,7 +1607,7 @@ func (c *Direct) answerPing(pr *tailcfg.PingRequest) {
 		if !buildfeatures.HasC2N {
 			return
 		}
-		if !useNoise && !envknob.Bool("TS_DEBUG_PERMIT_HTTP_C2N") {
+		if !useNoise {
 			c.logf("refusing to answer c2n ping without noise")
 			return
 		}

@@ -13,7 +13,6 @@ import (
 	"golang.org/x/sys/cpu"
 	"golang.org/x/sys/windows"
 	"golang.zx2c4.com/wireguard/windows/tunnel/winipcfg"
-	"tailscale.com/envknob"
 	"tailscale.com/net/netmon"
 	"tailscale.com/tsconst"
 	"tailscale.com/types/logger"
@@ -44,8 +43,6 @@ func control(logf logger.Logf, _ *netmon.Monitor) func(network, address string, 
 		return controlC(logf, network, address, c)
 	}
 }
-
-var bindToInterfaceByRouteEnv = envknob.RegisterBool("TS_BIND_TO_INTERFACE_BY_ROUTE")
 
 // controlC binds c to the Windows interface that holds a default
 // route, and is not the Tailscale WinTun interface.
@@ -84,7 +81,7 @@ func controlC(logf logger.Logf, network, address string, c syscall.RawConn) (err
 	}
 
 	var ifaceIdxV4, ifaceIdxV6 uint32
-	if useRoute := bindToInterfaceByRoute.Load() || bindToInterfaceByRouteEnv(); useRoute {
+	if useRoute := bindToInterfaceByRoute.Load(); useRoute {
 		addr, err := parseAddress(address)
 		if err == nil {
 			if canV4 && (addr.Is4() || addr.Is4In6()) {

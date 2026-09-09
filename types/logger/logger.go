@@ -22,7 +22,6 @@ import (
 	"context"
 
 	"go4.org/mem"
-	"tailscale.com/envknob"
 	"tailscale.com/util/ctxkey"
 	"tailscale.com/util/testenv"
 )
@@ -162,9 +161,6 @@ func RateLimitedFn(logf Logf, f time.Duration, burst int, maxCache int) Logf {
 // timeNow is a function that returns the current time, used for calculating
 // rate limits.
 func RateLimitedFnWithClock(logf Logf, f time.Duration, burst int, maxCache int, timeNow func() time.Time) Logf {
-	if envknob.String("TS_DEBUG_LOG_RATE") == "all" {
-		return logf
-	}
 	if runtime.GOOS == "plan9" {
 		// To ease bring-up.
 		return logf

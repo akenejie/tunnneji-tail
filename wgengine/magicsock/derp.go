@@ -613,9 +613,6 @@ func (c *Conn) runDerpReader(ctx context.Context, regionID int, dc *derphttp.Cli
 			pkt = m
 			res.n = len(m.Data)
 			res.src = m.Source
-			if logDerpVerbose() {
-				c.logf("magicsock: got derp-%v packet: %q", regionID, m.Data)
-			}
 			// If this is a new sender we hadn't seen before, remember it and
 			// register a route for this peer.
 			if res.src != lastPacketSrc { // avoid map lookup w/ high throughput single peer
@@ -812,29 +809,6 @@ func (c *Conn) SetDERPMapWithoutReSTUN(dm *tailcfg.DERPMap) {
 func (c *Conn) setDERPMap(dm *tailcfg.DERPMap, doReStun bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-
-	var derpAddr = debugUseDERPAddr()
-	if derpAddr != "" {
-		derpPort := 443
-		if debugUseDERPHTTP() {
-			// Match the port for -dev in derper.go
-			derpPort = 3340
-		}
-		dm = &tailcfg.DERPMap{
-			OmitDefaultRegions: true,
-			Regions: map[int]*tailcfg.DERPRegion{
-				999: {
-					RegionID: 999,
-					Nodes: []*tailcfg.DERPNode{{
-						Name:     "999dev",
-						RegionID: 999,
-						HostName: derpAddr,
-						DERPPort: derpPort,
-					}},
-				},
-			},
-		}
-	}
 
 	if reflect.DeepEqual(dm, c.derpMap) {
 		return

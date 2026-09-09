@@ -8,7 +8,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"io"
 	"maps"
@@ -23,7 +22,6 @@ import (
 	"time"
 
 	"tailscale.com/control/controlknobs"
-	"tailscale.com/envknob"
 	"tailscale.com/hostinfo"
 	"tailscale.com/tailcfg"
 	"tailscale.com/tstime"
@@ -905,9 +903,6 @@ func (ms *mapSession) addUserProfile(nm *netmap.NetworkMap, userID tailcfg.UserI
 	}
 }
 
-var debugPatchifyPeer = envknob.RegisterBool("TS_DEBUG_PATCHIFY_PEER")
-var debugPatchifyPeerMiss = envknob.RegisterBool("TS_DEBUG_PATCHIFY_PEER_MISS")
-
 // patchifyMissOnFalse, if non-nil, is called with the field name when
 // patchifyPeer fails. It is set by an init func in map_debug.go.
 var patchifyMissOnFalse func(string)
@@ -916,17 +911,10 @@ var patchifyMissOnFalse func(string)
 // when possible.
 func (ms *mapSession) patchifyPeersChanged(resp *tailcfg.MapResponse) {
 	var onFalse func(string)
-	if debugPatchifyPeerMiss() {
-		onFalse = patchifyMissOnFalse
-	}
 	filtered := resp.PeersChanged[:0]
 	for _, n := range resp.PeersChanged {
 		if p, ok := ms.patchifyPeer(n, onFalse); ok {
 			patchifiedPeer.Add(1)
-			if debugPatchifyPeer() {
-				patchj, _ := json.Marshal(p)
-				ms.logf("debug: patchifyPeer[ID=%v]: %s", n.ID, patchj)
-			}
 			if p != nil {
 				resp.PeersChangedPatch = append(resp.PeersChangedPatch, p)
 			} else {

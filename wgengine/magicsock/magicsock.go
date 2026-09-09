@@ -31,7 +31,6 @@ import (
 	"golang.org/x/net/ipv6"
 	"tailscale.com/control/controlknobs"
 	"tailscale.com/disco"
-	"tailscale.com/envknob"
 	"tailscale.com/feature/buildfeatures"
 	"tailscale.com/feature/condlite/expvar"
 	"tailscale.com/health"
@@ -69,6 +68,7 @@ import (
 	"tailscale.com/util/set"
 	"tailscale.com/util/testenv"
 	"tailscale.com/util/usermetric"
+	"tailscale.com/version"
 	"tailscale.com/wgengine/filter"
 	"tailscale.com/wgengine/router"
 	"tailscale.com/wgengine/wgint"
@@ -715,7 +715,7 @@ func NewConn(opts Options) (*Conn, error) {
 		Logf:                logger.WithPrefix(c.logf, "netcheck: "),
 		NetMon:              c.netMon,
 		SendPacket:          c.sendUDPNetcheck,
-		SkipExternalNetwork: inTest(),
+		SkipExternalNetwork: false,
 		PortMapper:          c.portMapper,
 		UseDNSCache:         true,
 	}
@@ -905,20 +905,11 @@ func (c *Conn) updateEndpoints(why string) {
 				// etc)
 				d := tstime.RandomDurationBetween(20*time.Second, 26*time.Second)
 				if t := c.periodicReSTUNTimer; t != nil {
-					if debugReSTUNStopOnIdle() {
-						c.logf("resetting existing periodicSTUN to run in %v", d)
-					}
 					t.Reset(d)
 				} else {
-					if debugReSTUNStopOnIdle() {
-						c.logf("scheduling periodicSTUN to run in %v", d)
-					}
 					c.periodicReSTUNTimer = time.AfterFunc(d, c.doPeriodicSTUN)
 				}
 			} else {
-				if debugReSTUNStopOnIdle() {
-					c.logf("periodic STUN idle")
-				}
 				c.stopPeriodicReSTUNTimerLocked()
 			}
 		}
@@ -963,7 +954,7 @@ func (c *Conn) setEndpoints(endpoints []tailcfg.Endpoint) (changed bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if !anySTUN && c.derpMap == nil && !inTest() {
+	if !anySTUN && c.derpMap == nil {
 		// Don't bother storing or reporting this yet. We
 		// don't have a DERP map or any STUN entries, so we're
 		// just starting up. A DERP map should arrive shortly
@@ -1316,7 +1307,7 @@ func (c *Conn) determineEndpoints(ctx context.Context) ([]tailcfg.Endpoint, erro
 		return
 	}
 	addAddr := func(ipp netip.AddrPort, et tailcfg.EndpointType) {
-		if !ipp.IsValid() || (debugOmitLocalAddresses() && et == tailcfg.EndpointLocal) {
+		if !ipp.IsValid() {
 			return
 		}
 		if _, ok := already[ipp]; !ok {
@@ -1486,7 +1477,7 @@ var errNetworkDown = errors.New("magicsock: network down")
 func (c *Conn) networkDown() bool {
 	// For tests, always assume the network is up unless we're explicitly
 	// testing this behaviour.
-	if envknob.AssumeNetworkUp() || (testenv.InTest() && !c.checkNetworkUpDuringTests) {
+	if testenv.InTest() && !c.checkNetworkUpDuringTests {
 		return false
 	}
 	return !c.networkUp.Load()
@@ -1938,7 +1929,7 @@ const (
 // fake latency to add before replying to disco pings. This can be used to bias
 // peers towards using IPv6 when both IPv4 and IPv6 are available at similar
 // speeds.
-var debugIPv4DiscoPingPenalty = envknob.RegisterDuration("TS_DISCO_PONG_IPV4_DELAY")
+func debugIPv4DiscoPingPenalty() time.Duration { return 0 }
 
 // sendDiscoAllocateUDPRelayEndpointRequest is primarily an alias for
 // sendDiscoMessage, but it will alternatively send m over the eventbus if dst
@@ -2034,7 +2025,7 @@ func (c *Conn) sendDiscoMessage(dst epAddr, dstKey key.NodePublic, dstDisco key.
 	const isDisco = true
 	sent, err = c.sendAddr(dst.ap, dstKey, pkt, isDisco, dst.vni.IsSet())
 	if sent {
-		if logLevel == discoLog || (logLevel == discoVerboseLog && debugDisco()) {
+		if logLevel == discoLog {
 			node := "?"
 			if !dstKey.IsZero() {
 				node = dstKey.ShortString()
@@ -2201,9 +2192,6 @@ func (c *Conn) handleDiscoMessage(msg []byte, src epAddr, shouldBeRelayHandshake
 	if c.closed {
 		return
 	}
-	if debugDisco() {
-		c.logf("magicsock: disco: got disco-looking frame from %v via %s len %v", sender.ShortString(), via, len(msg))
-	}
 	if c.privateKey.IsZero() {
 		// Ignore disco messages when we're stopped.
 		return
@@ -2215,18 +2203,12 @@ func (c *Conn) handleDiscoMessage(msg []byte, src epAddr, shouldBeRelayHandshake
 		var ok bool
 		di, ok = c.relayManager.discoInfo(sender)
 		if !ok {
-			if debugDisco() {
-				c.logf("magicsock: disco: ignoring disco-looking relay handshake frame, no active handshakes with key %v over %v", sender.ShortString(), src)
-			}
 			return
 		}
 	case c.peerMap.knownPeerDiscoKey(sender):
 		di = c.discoInfoForKnownPeerLocked(sender)
 	default:
 		metricRecvDiscoBadPeer.Add(1)
-		if debugDisco() {
-			c.logf("magicsock: disco: ignoring disco-looking frame, don't know of key %v", sender.ShortString())
-		}
 		return
 	}
 
@@ -2255,10 +2237,6 @@ func (c *Conn) handleDiscoMessage(msg []byte, src epAddr, shouldBeRelayHandshake
 		// group of messages. Don't log in normal case.
 		// Callers may choose to pass on to wireguard, in case
 		// it's actually a wireguard packet (super unlikely, but).
-		if debugDisco() {
-			c.logf("magicsock: disco: failed to open naclbox from %v (wrong rcpt?) via %s", sender, via)
-		}
-
 		metricRecvDiscoBadKey.Add(1)
 		return
 	}
@@ -2271,9 +2249,6 @@ func (c *Conn) handleDiscoMessage(msg []byte, src epAddr, shouldBeRelayHandshake
 	}
 
 	dm, err := disco.Parse(payload)
-	if debugDisco() {
-		c.logf("magicsock: disco: disco.Parse = %T, %v", dm, err)
-	}
 	if err != nil {
 		// Couldn't parse it, but it was inside a correctly
 		// signed box, so just ignore it, assuming it's from a
@@ -2560,10 +2535,6 @@ func (c *Conn) handlePingLocked(dm *disco.Ping, src epAddr, di *discoInfo, derpN
 
 	// This is a naked [disco.Ping] without a VNI.
 
-	if debugNeverDirectUDP() && !isDerp {
-		return
-	}
-
 	// If we can figure out with certainty which node key this disco
 	// message is for, eagerly update our [epAddr]<>node and disco<>node
 	// mappings to make p2p path discovery faster in simple
@@ -2621,7 +2592,7 @@ func (c *Conn) handlePingLocked(dm *disco.Ping, src epAddr, di *discoInfo, derpN
 		return
 	}
 
-	if !likelyHeartBeat || debugDisco() {
+	if !likelyHeartBeat {
 		pingNodeSrcStr := dstKey.ShortString()
 		if numNodes > 1 {
 			pingNodeSrcStr = "[one-of-multi]"
@@ -2679,12 +2650,6 @@ func (c *Conn) enqueueCallMeMaybe(derpAddr netip.AddrPort, de *endpoint) {
 		eps = append(eps, ep.Addr)
 	}
 	go de.c.sendDiscoMessage(epAddr{ap: derpAddr}, de.publicKey, epDisco.key, &disco.CallMeMaybe{MyNumber: eps}, discoLog)
-	if debugSendCallMeUnknownPeer() {
-		// Send a callMeMaybe packet to a non-existent peer
-		unknownKey := key.NewNode().Public()
-		c.logf("magicsock: sending CallMeMaybe to unknown peer per TS_DEBUG_SEND_CALLME_UNKNOWN_PEER")
-		go de.c.sendDiscoMessage(epAddr{ap: derpAddr}, unknownKey, epDisco.key, &disco.CallMeMaybe{MyNumber: eps}, discoLog)
-	}
 }
 
 // discoInfoForKnownPeerLocked returns the previous or new discoInfo for k.
@@ -2813,9 +2778,6 @@ func debugRingBufferSize(numPeers int) int {
 	} else {
 		maxRingBufferSize = 4 << 20
 	}
-	if v := debugRingBufferMaxSizeBytes(); v > 0 {
-		maxRingBufferSize = v
-	}
 
 	const averageRingBufferElemSize = 512
 	return max(defaultVal, maxRingBufferSize/(averageRingBufferElemSize*numPeers))
@@ -2830,7 +2792,7 @@ type debugFlags struct {
 }
 
 func (c *Conn) debugFlagsLocked() (f debugFlags) {
-	f.heartbeatDisabled = debugEnableSilentDisco() || c.silentDiscoOn.Load()
+	f.heartbeatDisabled = c.silentDiscoOn.Load()
 	f.probeUDPLifetimeOn = c.probeUDPLifetimeOn.Load()
 	return
 }
@@ -3277,10 +3239,6 @@ func (c *Conn) upsertPeerLocked(n tailcfg.NodeView, flags debugFlags, entriesPer
 	ep.initFakeUDPAddr()
 	ep.updateDiscoKey(n.DiscoKey())
 
-	if debugPeerMap() {
-		c.logEndpointCreated(n)
-	}
-
 	ep.updateFromNode(n, flags.heartbeatDisabled, flags.probeUDPLifetimeOn)
 	c.peerMap.upsertEndpoint(ep, key.DiscoPublic{})
 }
@@ -3401,7 +3359,7 @@ func (c *Conn) relayCandidateLocked(p tailcfg.NodeView) (ok bool, cp candidatePe
 }
 
 func devPanicf(format string, a ...any) {
-	if testenv.InTest() || envknob.CrashOnUnexpected() {
+	if testenv.InTest() || version.IsUnstableBuild() {
 		panic(fmt.Sprintf(format, a...))
 	}
 }
@@ -3630,9 +3588,6 @@ func (c *Conn) shouldDoPeriodicReSTUNLocked() bool {
 	}
 	if f := c.idleFunc; f != nil {
 		idleFor := f()
-		if debugReSTUNStopOnIdle() {
-			c.logf("magicsock: periodicReSTUN: idle for %v", idleFor.Round(time.Second))
-		}
 		if idleFor > sessionActiveTimeout {
 			if c.controlKnobs != nil && c.controlKnobs.ForceBackgroundSTUN.Load() {
 				// Overridden by control.
@@ -3708,22 +3663,12 @@ func (c *Conn) listenPacket(network string, port uint16) (nettype.PacketConn, er
 // If curPortFate is set to dropCurrentPort, no attempt is made to reuse
 // the current port.
 func (c *Conn) bindSocket(ruc *RebindingUDPConn, network string, curPortFate currentPortFate) error {
-	if debugBindSocket() {
-		c.logf("magicsock: bindSocket: network=%q curPortFate=%v", network, curPortFate)
-	}
-
 	// Hold the ruc lock the entire time, so that the close+bind is atomic
 	// from the perspective of ruc receive functions.
 	ruc.mu.Lock()
 	defer ruc.mu.Unlock()
 
 	if runtime.GOOS == "js" {
-		ruc.setConnLocked(newBlockForeverConn(), "", c.bind.BatchSize(), c.controlKnobs)
-		return nil
-	}
-
-	if debugAlwaysDERP() {
-		c.logf("disabled %v per TS_DEBUG_ALWAYS_USE_DERP", network)
 		ruc.setConnLocked(newBlockForeverConn(), "", c.bind.BatchSize(), c.controlKnobs)
 		return nil
 	}
@@ -3743,10 +3688,6 @@ func (c *Conn) bindSocket(ruc *RebindingUDPConn, network string, curPortFate cur
 	ports = append(ports, 0)
 	// Remove duplicates. (All duplicates are consecutive.)
 	ports = slices.Compact(ports)
-
-	if debugBindSocket() {
-		c.logf("magicsock: bindSocket: candidate ports: %+v", ports)
-	}
 
 	var pconn nettype.PacketConn
 	for _, port := range ports {
@@ -3780,9 +3721,6 @@ func (c *Conn) bindSocket(ruc *RebindingUDPConn, network string, curPortFate cur
 		trySetUDPSocketOptions(pconn, c.logf)
 
 		// Success.
-		if debugBindSocket() {
-			c.logf("magicsock: bindSocket: successfully listened %v port %d", network, port)
-		}
 		ruc.setConnLocked(pconn, network, c.bind.BatchSize(), c.controlKnobs)
 		if network == "udp4" {
 			c.health.SetUDP4Unbound(false)
@@ -4555,7 +4493,7 @@ type NewDiscoKeyAvailable struct {
 //
 // We do not need the Conn to be locked, but the endpoint should be.
 func (c *Conn) maybeSendTSMPDiscoAdvert(de *endpoint) {
-	if !buildfeatures.HasCacheNetMap || !envknob.BoolDefaultTrue("TS_USE_CACHED_NETMAP") {
+	if !buildfeatures.HasCacheNetMap {
 		return
 	}
 

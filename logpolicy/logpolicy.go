@@ -30,7 +30,6 @@ import (
 
 	"golang.org/x/term"
 	"tailscale.com/atomicfile"
-	"tailscale.com/envknob"
 	"tailscale.com/feature"
 	"tailscale.com/feature/buildfeatures"
 	"tailscale.com/health"
@@ -294,7 +293,7 @@ func runningUnderSystemd() bool {
 }
 
 func redirectStderrToLogPanics() bool {
-	return runningUnderSystemd() || envknob.Bool("TS_PLEASE_PANIC")
+	return runningUnderSystemd()
 }
 
 // winProgramDataAccessible reports whether the directory (assumed to
@@ -537,9 +536,6 @@ func (opts Options) init(disableLogging bool) (*logtail.Config, *Policy) {
 	} else {
 		lflags = log.LstdFlags
 	}
-	if envknob.Bool("TS_DEBUG_LOG_TIME") {
-		lflags = log.LstdFlags | log.Lmicroseconds
-	}
 	if runningUnderSystemd() {
 		// If journalctl is going to prepend its own timestamp
 		// anyway, no need to add one.
@@ -653,7 +649,7 @@ func (opts Options) init(disableLogging bool) (*logtail.Config, *Policy) {
 
 // New returns a new log policy (a logger and its instance ID).
 func (opts Options) New() *Policy {
-	disableLogging := envknob.NoLogsNoSupport() || testenv.InTest() || runtime.GOOS == "plan9" || !buildfeatures.HasLogTail
+	disableLogging := testenv.InTest() || runtime.GOOS == "plan9" || !buildfeatures.HasLogTail
 	_, policy := opts.init(disableLogging)
 	return policy
 }
@@ -827,7 +823,7 @@ type TransportOptions struct {
 // New returns an HTTP Transport particularly suited to uploading logs
 // to the given host name. See [DialContext] for details on how it works.
 func (opts TransportOptions) New() http.RoundTripper {
-	if testenv.InTest() || envknob.NoLogsNoSupport() {
+	if testenv.InTest() {
 		return noopPretendSuccessTransport{}
 	}
 	if opts.NetMon == nil {
@@ -871,12 +867,6 @@ func (opts TransportOptions) New() http.RoundTripper {
 	// TODO(bradfitz): remove this debug knob once we've decided
 	// to upload via HTTP/1 or HTTP/2 (probably HTTP/1). Or we might just enforce
 	// it server-side.
-	if envknob.Bool("TS_DEBUG_FORCE_H1_LOGS") {
-		tr.TLSClientConfig = nil // DefaultTransport's was already initialized w/ h2
-		tr.ForceAttemptHTTP2 = false
-		tr.TLSNextProto = map[string]func(authority string, c *tls.Conn) http.RoundTripper{}
-	}
-
 	tr.TLSClientConfig = tlsdial.Config(opts.Health, tr.TLSClientConfig)
 	// Force TLS 1.3 since we know log.tailscale.com supports it.
 	tr.TLSClientConfig.MinVersion = tls.VersionTLS13

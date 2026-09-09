@@ -23,7 +23,6 @@ import (
 	"slices"
 	"time"
 
-	"tailscale.com/envknob"
 	"tailscale.com/health"
 	"tailscale.com/health/healthmsg"
 	"tailscale.com/ipn"
@@ -141,9 +140,6 @@ var noTailnetLockStateDirWarnable = health.Register(&health.Warnable{
 // b.mu must be held.
 func (b *LocalBackend) tkaFilterDeltaMutsLocked(muts []netmap.NodeMutation) []netmap.NodeMutation {
 	if b.tka == nil {
-		return muts
-	}
-	if envknob.TKASkipSignatureCheck() {
 		return muts
 	}
 	for i, m := range muts {

@@ -6,9 +6,7 @@ package resolver
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"crypto/tls"
-	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -27,7 +25,6 @@ import (
 
 	dns "golang.org/x/net/dns/dnsmessage"
 	"tailscale.com/control/controlknobs"
-	"tailscale.com/envknob"
 	"tailscale.com/feature"
 	"tailscale.com/feature/buildfeatures"
 	"tailscale.com/health"
@@ -297,12 +294,11 @@ type resolverAndDelay struct {
 
 // forwarder forwards DNS packets to a number of upstream nameservers.
 type forwarder struct {
-	logf       logger.Logf
-	netMon     *netmon.Monitor     // always non-nil
-	linkSel    ForwardLinkSelector // TODO(bradfitz): remove this when tsdial.Dialer absorbs it
-	dialer     *tsdial.Dialer
-	health     *health.Tracker // always non-nil
-	verboseFwd bool            // if true, log all DNS forwarding
+	logf    logger.Logf
+	netMon  *netmon.Monitor     // always non-nil
+	linkSel ForwardLinkSelector // TODO(bradfitz): remove this when tsdial.Dialer absorbs it
+	dialer  *tsdial.Dialer
+	health  *health.Tracker // always non-nil
 
 	controlKnobs *controlknobs.Knobs // or nil
 
@@ -366,7 +362,6 @@ func newForwarder(logf logger.Logf, netMon *netmon.Monitor, linkSel ForwardLinkS
 		dialer:       dialer,
 		health:       health,
 		controlKnobs: knobs,
-		verboseFwd:   verboseDNSForward(),
 	}
 	f.ctx, f.ctxCancel = context.WithCancel(context.Background())
 	return f
@@ -612,27 +607,10 @@ func (f *forwarder) sendDoH(ctx context.Context, urlBase string, c *http.Client,
 	return res, err
 }
 
-var (
-	verboseDNSForward = envknob.RegisterBool("TS_DEBUG_DNS_FORWARD_SEND")
-	skipTCPRetry      = envknob.RegisterBool("TS_DNS_FORWARD_SKIP_TCP_RETRY")
-
-	// For correlating log messages in the send() function; only used when
-	// verboseDNSForward() is true.
-	forwarderCount atomic.Uint64
-)
-
 // send sends packet to dst. It is best effort.
 //
 // send expects the reply to have the same txid as txidOut.
 func (f *forwarder) send(ctx context.Context, fq *forwardQuery, rr resolverAndDelay) (ret []byte, err error) {
-	if f.verboseFwd {
-		id := forwarderCount.Add(1)
-		domain, typ, _ := nameFromQuery(fq.packet)
-		f.logf("forwarder.send(%q, %d, %v, %d) from %v [%d] ...", rr.name.Addr, fq.txid, typ, len(domain), fq.src, id)
-		defer func() {
-			f.logf("forwarder.send(%q, %d, %v, %d) from %v [%d] = %v, %v", rr.name.Addr, fq.txid, typ, len(domain), fq.src, id, len(ret), err)
-		}()
-	}
 	if strings.HasPrefix(rr.name.Addr, "http://") {
 		if !buildfeatures.HasPeerAPIClient {
 			return nil, feature.ErrUnavailable
@@ -674,7 +652,7 @@ func (f *forwarder) send(ctx context.Context, fq *forwardQuery, rr resolverAndDe
 	defer cancel()
 
 	isUDPQuery := fq.family == "udp"
-	skipTCP := skipTCPRetry() || (f.controlKnobs != nil && f.controlKnobs.DisableDNSForwarderTCPRetries.Load())
+	skipTCP := f.controlKnobs != nil && f.controlKnobs.DisableDNSForwarderTCPRetries.Load()
 
 	// Print logs about retries if this was because of a truncated response.
 	var explicitRetry atomic.Bool // true if truncated UDP response retried
@@ -888,8 +866,6 @@ func (f *forwarder) sendUDP(ctx context.Context, fq *forwardQuery, rr resolverAn
 	return out, nil
 }
 
-var optDNSForwardUseRoutes = envknob.RegisterOptBool("TS_DEBUG_DNS_FORWARD_USE_ROUTES")
-
 // ShouldUseRoutes reports whether the DNS resolver should consider routes when dialing
 // upstream nameservers via TCP.
 //
@@ -911,10 +887,7 @@ func ShouldUseRoutes(knobs *controlknobs.Knobs) bool {
 		// this behavior is still gated by the "user-dial-routes" nodeAttr.
 		return knobs != nil && knobs.UserDialUseRoutes.Load()
 	default:
-		// On all other platforms, it is the default behavior,
-		// but it can be overridden with the "TS_DEBUG_DNS_FORWARD_USE_ROUTES" env var.
-		doNotUseRoutes := optDNSForwardUseRoutes().EqualBool(false)
-		return !doNotUseRoutes
+		return true
 	}
 }
 
@@ -1162,7 +1135,7 @@ type forwardQuery struct {
 // node DNS proxy queries), otherwise f.resolvers is used.
 func (f *forwarder) forwardWithDestChan(ctx context.Context, query packet, responseChan chan<- packet, resolvers ...resolverAndDelay) error {
 	metricDNSFwd.Add(1)
-	domain, typ, err := nameFromQuery(query.bs)
+	domain, _, err := nameFromQuery(query.bs)
 	if err != nil {
 		metricDNSFwdErrorName.Add(1)
 		return err
@@ -1230,12 +1203,6 @@ func (f *forwarder) forwardWithDestChan(ctx context.Context, query packet, respo
 	}
 	defer fq.closeOnCtxDone.Close()
 
-	if f.verboseFwd {
-		domainSha256 := sha256.Sum256([]byte(domain))
-		domainSig := base64.RawStdEncoding.EncodeToString(domainSha256[:3])
-		f.logf("request(%d, %v, %d, %s) %d...", fq.txid, typ, len(domain), domainSig, len(fq.packet))
-	}
-
 	resc := make(chan []byte, 1) // it's fine buffered or not
 	errc := make(chan error, 1)  // it's fine buffered or not too
 	for i := range resolvers {
@@ -1276,9 +1243,6 @@ func (f *forwarder) forwardWithDestChan(ctx context.Context, query packet, respo
 				metricDNSFwdErrorContext.Add(1)
 				return fmt.Errorf("waiting to send response: %w", ctx.Err())
 			case responseChan <- packet{v, query.family, query.addr}:
-				if f.verboseFwd {
-					f.logf("response(%d, %v, %d) = %d, nil", fq.txid, typ, len(domain), len(v))
-				}
 				metricDNSFwdSuccess.Add(1)
 				f.health.SetHealthy(dnsForwarderFailing)
 				return nil
@@ -1333,9 +1297,6 @@ func (f *forwarder) forwardWithDestChan(ctx context.Context, query packet, respo
 						f.health.SetUnhealthy(dnsForwarderFailing, health.Args{health.ArgDNSServers: strings.Join(resolverAddrs, ",")})
 					}
 				case responseChan <- res:
-					if f.verboseFwd {
-						f.logf("forwarder response(%d, %v, %d) = %d, %v", fq.txid, typ, len(domain), len(res.bs), firstErr)
-					}
 					return nil
 				}
 				return firstErr

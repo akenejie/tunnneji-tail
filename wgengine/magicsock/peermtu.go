@@ -10,7 +10,6 @@ import (
 
 	"golang.org/x/sys/unix"
 	"tailscale.com/disco"
-	"tailscale.com/net/tstun"
 )
 
 // Peer path MTU routines shared by platforms that implement it.
@@ -36,22 +35,10 @@ func (c *Conn) DontFragSetting() (bool, error) {
 // ShouldPMTUD returns true if this client should try to enable peer MTU
 // discovery, false otherwise.
 func (c *Conn) ShouldPMTUD() bool {
-	if v, ok := debugEnablePMTUD().Get(); ok {
-		if debugPMTUD() {
-			c.logf("magicsock: peermtu: peer path MTU discovery set via envknob to %v", v)
-		}
-		return v
-	}
 	if c.controlKnobs != nil {
 		if v := c.controlKnobs.PeerMTUEnable.Load(); v {
-			if debugPMTUD() {
-				c.logf("magicsock: peermtu: peer path MTU discovery enabled by control")
-			}
 			return v
 		}
-	}
-	if debugPMTUD() {
-		c.logf("magicsock: peermtu: peer path MTU discovery set by default to false")
 	}
 	return false // Until we feel confident PMTUD is solid.
 }
@@ -84,12 +71,6 @@ func (c *Conn) PeerMTUEnabled() bool {
 // If the PMTUD settings changed, it resets the endpoint state so that it will
 // re-probe path MTUs to this peer.
 func (c *Conn) UpdatePMTUD() {
-	if debugPMTUD() {
-		df4, err4 := c.getDontFragment("udp4")
-		df6, err6 := c.getDontFragment("udp6")
-		c.logf("magicsock: peermtu: peer MTU status %v DF bit status: v4: %v (%v) v6: %v (%v)", c.peerMTUEnabled.Load(), df4, err4, df6, err6)
-	}
-
 	enable := c.ShouldPMTUD()
 	if c.peerMTUEnabled.Load() == enable {
 		c.logf("[v1] magicsock: peermtu: peer MTU status is %v", enable)
@@ -110,9 +91,6 @@ func (c *Conn) UpdatePMTUD() {
 		_ = c.setDontFragment("udp6", false)
 		newStatus = false
 	}
-	if debugPMTUD() {
-		c.logf("magicsock: peermtu: peer MTU probes are %v", tstun.WireMTUsToProbe)
-	}
 	c.peerMTUEnabled.Store(newStatus)
 	c.resetEndpointStates()
 }
@@ -123,7 +101,7 @@ func pmtuShouldLogDiscoTxErr(m disco.Message, err error) bool {
 	// Large disco.Ping packets used to probe path MTU may result in
 	// an EMSGSIZE error fairly regularly which can pollute logs.
 	p, ok := m.(*disco.Ping)
-	if !ok || p.Padding == 0 || !errors.Is(err, errEMSGSIZE) || debugPMTUD() {
+	if !ok || p.Padding == 0 || !errors.Is(err, errEMSGSIZE) {
 		return true
 	}
 	return false

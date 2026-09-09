@@ -37,8 +37,7 @@ import (
 	"tailscale.com/client/tailscale/apitype"
 	"tailscale.com/control/controlclient"
 	"tailscale.com/control/controlknobs"
-	
-	"tailscale.com/envknob"
+
 	"tailscale.com/envknob/featureknob"
 	"tailscale.com/feature"
 	"tailscale.com/feature/buildfeatures"
@@ -106,15 +105,6 @@ import (
 	"tailscale.com/wgengine/wgcfg/nmcfg"
 )
 
-var controlDebugFlags = getControlDebugFlags()
-
-func getControlDebugFlags() []string {
-	if e := envknob.String("TS_DEBUG_CONTROL_FLAGS"); e != "" {
-		return strings.Split(e, ",")
-	}
-	return nil
-}
-
 // SSHServer is the interface of the conditionally linked ssh/tailssh.server.
 type SSHServer interface {
 	HandleSSHConn(net.Conn) error
@@ -131,7 +121,6 @@ type SSHServer interface {
 	// Shutdown is called when tailscaled is shutting down.
 	Shutdown()
 }
-
 
 // watchSession represents a WatchNotifications channel,
 // an [ipnauth.Actor] that owns it (e.g., a connected GUI/CLI),
@@ -370,12 +359,7 @@ type LocalBackend struct {
 	// Last ClientVersion received in MapResponse, guarded by mu.
 	lastClientVersion *tailcfg.ClientVersion
 
-
-
-
-
 	// notified about.
-
 
 	// driveGen is the generation counter consulted by the [drive.RemoteSource]
 	// installed on [sys.DriveForLocal]. It is bumped whenever the inputs that
@@ -523,8 +507,6 @@ func NewLocalBackend(logf logger.Logf, logID logid.PublicID, sys *tsd.System, lo
 	if sds, ok := store.(ipn.StateStoreDialerSetter); ok {
 		sds.SetDialer(dialer.SystemDial)
 	}
-
-	envknob.LogCurrent(logf)
 
 	ctx, cancel := context.WithCancelCause(context.Background())
 	clock := tstime.StdClock{}
@@ -1091,7 +1073,7 @@ func (b *LocalBackend) shouldPauseControlClientLocked(prefs ipn.PrefsView) bool 
 	}
 
 	networkUp := b.interfaceState.AnyInterfaceUp()
-	pauseForNetwork := !networkUp && !testenv.InTest() && !envknob.AssumeNetworkUp()
+	pauseForNetwork := !networkUp && !testenv.InTest()
 	if pauseForNetwork {
 		return true
 	}
@@ -1644,8 +1626,6 @@ func (b *LocalBackend) WhoIsNodeKey(k key.NodePublic) (n tailcfg.NodeView, u tai
 	return n, u, false
 }
 
-var debugWhoIs = envknob.RegisterBool("TS_DEBUG_WHOIS")
-
 // WhoIs reports the node and user who owns the node with the given IP:port.
 // If the IP address is a Tailscale IP, the provided port may be 0.
 //
@@ -1667,10 +1647,6 @@ func (b *LocalBackend) WhoIs(proto string, ipp netip.AddrPort) (n tailcfg.NodeVi
 	defer b.mu.Unlock()
 
 	failf := func(format string, args ...any) (tailcfg.NodeView, tailcfg.UserProfile, bool) {
-		if debugWhoIs() {
-			args = append([]any{proto, ipp}, args...)
-			b.logf("whois(%q, %v) :"+format, args...)
-		}
 		return zero, u, false
 	}
 
@@ -1967,32 +1943,13 @@ func (b *LocalBackend) setControlClientStatusLocked(c controlclient.Client, st c
 			}
 		}
 
-		if !envknob.TKASkipSignatureCheck() {
-			b.tkaFilterNetmapLocked(st.NetMap)
-		}
+		b.tkaFilterNetmapLocked(st.NetMap)
 		b.setNetMapLocked(st.NetMap)
 		b.updateFilterLocked(prefs.View())
 	}
 
 	// Now complete the lock-free parts of what we started while locked.
 	if st.NetMap != nil {
-		if envknob.NoLogsNoSupport() && st.NetMap.HasCap(tailcfg.CapabilityDataPlaneAuditLogs) {
-			msg := "tailnet requires logging to be enabled. Remove --no-logs-no-support from tailscaled command line."
-			b.health.SetLocalLogConfigHealth(errors.New(msg))
-			// Get the current prefs again, since we unlocked above.
-			prefs := b.pm.CurrentPrefs().AsStruct()
-			prefs.WantRunning = false
-			p := prefs.View()
-			if err := b.pm.SetPrefs(p, ipn.NetworkProfile{
-				MagicDNSName: st.NetMap.MagicDNSSuffix(),
-				DomainName:   st.NetMap.DomainName(),
-				DisplayName:  st.NetMap.TailnetDisplayName(),
-			}); err != nil {
-				b.logf("Failed to save new controlclient state: %v", err)
-			}
-			b.sendLocked(ipn.Notify{ErrMessage: &msg, Prefs: &p})
-			return
-		}
 		if oldNetMap != nil {
 			diff := st.NetMap.ConciseDiffFrom(oldNetMap)
 			if strings.TrimSpace(diff) == "" {
@@ -2495,8 +2452,7 @@ func (b *LocalBackend) UpdateNetmapDelta(muts []netmap.NodeMutation) (handled bo
 	// Note we do this AFTER the updates are applied in the nodeBackend, so that
 	// we can get its updated views to put back into the cache.
 	if buildfeatures.HasCacheNetMap &&
-		cn.SelfHasCap(tailcfg.NodeAttrCacheNetworkMaps) &&
-		envknob.BoolDefaultTrue("TS_USE_CACHED_NETMAP") {
+		cn.SelfHasCap(tailcfg.NodeAttrCacheNetworkMaps) {
 
 		var peersToUpdate []tailcfg.NodeView
 		for id := range updateIDs {
@@ -2929,7 +2885,7 @@ func (b *LocalBackend) initOnce() {
 }
 
 func (b *LocalBackend) controlDebugFlags() []string {
-	debugFlags := controlDebugFlags
+	var debugFlags []string
 	if b.sys.IsNetstackRouter() {
 		return append([]string{"netstack"}, debugFlags...)
 	}
@@ -3090,14 +3046,12 @@ func (b *LocalBackend) startLocked(opts ipn.Options) error {
 	// As of 2026-03-25 we require the envknob set to read a cached netmap, with
 	// the envknob defaulted to true so we can use it as a safety override
 	// during rollout.
-	if envknob.BoolDefaultTrue("TS_USE_CACHED_NETMAP") {
-		if nm, ok := b.loadDiskCacheLocked(); ok {
-			logf("loaded netmap from disk cache; %d peers", len(nm.Peers))
-			b.setControlClientStatusLocked(nil, controlclient.Status{
-				NetMap:   nm,
-				LoggedIn: true, // sure
-			})
-		}
+	if nm, ok := b.loadDiskCacheLocked(); ok {
+		logf("loaded netmap from disk cache; %d peers", len(nm.Peers))
+		b.setControlClientStatusLocked(nil, controlclient.Status{
+			NetMap:   nm,
+			LoggedIn: true, // sure
+		})
 	}
 
 	discoPublic := b.MagicConn().DiscoPublicKey()
@@ -4308,15 +4262,9 @@ func (b *LocalBackend) onTailnetDefaultAutoUpdate(au bool) {
 	}
 }
 
-// For testing lazy machine key generation.
-var panicOnMachineKeyGeneration = envknob.RegisterBool("TS_DEBUG_PANIC_MACHINE_KEY")
-
 func (b *LocalBackend) createGetMachinePrivateKeyFunc() func() (key.MachinePrivate, error) {
 	var cache syncs.AtomicValue[key.MachinePrivate]
 	return func() (key.MachinePrivate, error) {
-		if panicOnMachineKeyGeneration() {
-			panic("machine key generated")
-		}
 		if v, ok := cache.LoadOk(); ok {
 			return v, nil
 		}
@@ -4854,9 +4802,6 @@ func (b *LocalBackend) checkSSHPrefsLocked(p *ipn.Prefs) error {
 	if err := featureknob.CanRunTailscaleSSH(); err != nil {
 		return err
 	}
-	if envknob.SSHIgnoreTailnetPolicy() || envknob.SSHPolicyFile() != "" {
-		return nil
-	}
 	// Assume that we do have the SSH capability if don't have a netmap yet.
 	if !b.currentNode().SelfHasCapOr(tailcfg.CapabilitySSH, true) {
 		if b.isDefaultServerLocked() {
@@ -4870,9 +4815,6 @@ func (b *LocalBackend) checkSSHPrefsLocked(p *ipn.Prefs) error {
 func (b *LocalBackend) sshOnButUnusableHealthCheckMessageLocked() (healthMessage string) {
 	if p := b.pm.CurrentPrefs(); !p.Valid() || !p.RunSSH() {
 		return ""
-	}
-	if envknob.SSHIgnoreTailnetPolicy() || envknob.SSHPolicyFile() != "" {
-		return "development SSH policy in use"
 	}
 	nm := b.currentNode().NetMap()
 	if nm == nil {
@@ -5047,10 +4989,6 @@ func (b *LocalBackend) EditPrefsAs(mp *ipn.MaskedPrefs, actor ipnauth.Actor) (ip
 func (b *LocalBackend) checkEditPrefsAccessLocked(actor ipnauth.Actor, prefs ipn.PrefsView, mp *ipn.MaskedPrefs) error {
 	syncs.RequiresMutex(&b.mu)
 	var errs []error
-
-	if mp.RunSSHSet && mp.RunSSH && !envknob.CanSSHD() {
-		errs = append(errs, errors.New("Tailscale SSH server administratively disabled"))
-	}
 
 	// Check if the user is allowed to disconnect Tailscale.
 	if mp.WantRunningSet && !mp.WantRunning && b.pm.CurrentPrefs().WantRunning() {
@@ -6485,7 +6423,7 @@ func (b *LocalBackend) applyPrefsToHostinfoLocked(hi *tailcfg.Hostinfo, prefs ip
 	hi.RemoteConfig = buildfeatures.HasRemoteConfig && prefs.RemoteConfig() && feature.IsRegistered("remoteconfig")
 	// Likewise for AllowsUpdate: require the clientupdate feature's init to
 	// have run, not just the build tag being enabled.
-	hi.AllowsUpdate = buildfeatures.HasClientUpdate && (envknob.AllowsRemoteUpdate() || prefs.AutoUpdate().Apply.EqualBool(true)) && feature.IsRegistered("clientupdate")
+	hi.AllowsUpdate = buildfeatures.HasClientUpdate && prefs.AutoUpdate().Apply.EqualBool(true) && feature.IsRegistered("clientupdate")
 
 	if buildfeatures.HasAdvertiseRoutes {
 		b.metrics.advertisedRoutes.Set(float64(tsaddr.WithoutExitRoute(prefs.AdvertiseRoutes()).Len()))
@@ -6556,14 +6494,6 @@ func (b *LocalBackend) enterStateLocked(newState ipn.State) {
 	oldState := b.state
 	b.setStateLocked(newState)
 	prefs := b.pm.CurrentPrefs()
-
-	// Some temporary (2024-05-05) debugging code to help us catch
-	// https://github.com/tailscale/tailscale/issues/11962 in the act.
-	if prefs.WantRunning() &&
-		prefs.ControlURLOrDefault(b.polc) == ipn.DefaultControlURL &&
-		envknob.Bool("TS_PANIC_IF_HIT_MAIN_CONTROL") {
-		panic("[unexpected] use of main control server in integration test")
-	}
 
 	netMap := cn.NetMap()
 	activeLogin := b.activeLogin
@@ -7261,7 +7191,7 @@ func (b *LocalBackend) setNetMapLocked(nm *netmap.NetworkMap) {
 	// not being updated (because of the envknob) and could be read back when
 	// the node starts up.
 	if nm != nil {
-		if b.currentNode().SelfHasCap(tailcfg.NodeAttrCacheNetworkMaps) && envknob.BoolDefaultTrue("TS_USE_CACHED_NETMAP") {
+		if b.currentNode().SelfHasCap(tailcfg.NodeAttrCacheNetworkMaps) {
 			if err := b.writeNetmapToDiskLockedWithPeers(nm); err != nil {
 				b.logf("write netmap to cache: %v", err)
 			}
@@ -7335,7 +7265,7 @@ func (b *LocalBackend) setDebugLogsByCapabilityLocked(caps set.Set[tailcfg.NodeC
 func (b *LocalBackend) setTCPPortsInterceptedFromNetmapAndPrefsLocked(prefs ipn.PrefsView) {
 	handlePorts := make([]uint16, 0, 4)
 
-	if prefs.Valid() && prefs.RunSSH() && envknob.CanSSHD() {
+	if prefs.Valid() && prefs.RunSSH() {
 		handlePorts = append(handlePorts, 22)
 	}
 	if b.ShouldExposeRemoteWebClient() {
@@ -7927,8 +7857,8 @@ var _ wgengine.NetLogSource = netLogNodeSource{}
 // peer matches. It is installed on the engine via [Engine.SetWGPeerLookup]
 // tunnneji-tail: stubs for functions referenced but not needed.
 
-func (b *LocalBackend) HandleQuad100Port80Conn(c net.Conn) error { return nil }
-func (b *LocalBackend) updateWarnSync(prefs ipn.PrefsView)        {}
+func (b *LocalBackend) HandleQuad100Port80Conn(c net.Conn) error        { return nil }
+func (b *LocalBackend) updateWarnSync(prefs ipn.PrefsView)              {}
 func (b *LocalBackend) updateNoSNATExitNodeWarning(prefs ipn.PrefsView) {}
 
 // in [NewLocalBackend] so that [wglog.Logger] can rewrite peer references

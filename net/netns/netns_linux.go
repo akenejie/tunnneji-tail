@@ -13,7 +13,6 @@ import (
 	"syscall"
 
 	"golang.org/x/sys/unix"
-	"tailscale.com/envknob"
 	"tailscale.com/net/netmon"
 	"tailscale.com/tsconst"
 	"tailscale.com/types/logger"
@@ -54,14 +53,9 @@ func socketMarkWorks() bool {
 	return true
 }
 
-var forceBindToDevice = envknob.RegisterBool("TS_FORCE_LINUX_BIND_TO_DEVICE")
-
 // UseSocketMark reports whether SO_MARK is in use.
 // If it doesn't, we have to use SO_BINDTODEVICE on our sockets instead.
 func UseSocketMark() bool {
-	if forceBindToDevice() {
-		return false
-	}
 	socketMarkWorksOnce.Do(func() {
 		socketMarkWorksOnce.v = socketMarkWorks()
 	})

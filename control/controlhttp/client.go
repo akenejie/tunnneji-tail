@@ -38,7 +38,6 @@ import (
 
 	"tailscale.com/control/controlbase"
 	"tailscale.com/control/controlhttp/controlhttpcommon"
-	"tailscale.com/envknob"
 	"tailscale.com/feature"
 	"tailscale.com/feature/buildfeatures"
 	"tailscale.com/health"
@@ -93,15 +92,13 @@ func (a *Dialer) httpsFallbackDelay() time.Duration {
 	return 500 * time.Millisecond
 }
 
-var _ = envknob.RegisterBool("TS_USE_CONTROL_DIAL_PLAN") // to record at init time whether it's in use
-
 func (a *Dialer) dial(ctx context.Context) (*ClientConn, error) {
 
 	a.logPort80Failure.Store(true)
 
 	// If we don't have a dial plan, just fall back to dialing the single
 	// host we know about.
-	useDialPlan := envknob.BoolDefaultTrue("TS_USE_CONTROL_DIAL_PLAN")
+	useDialPlan := true
 	if !useDialPlan || a.DialPlan == nil || len(a.DialPlan.Candidates) == 0 {
 		return a.dialHost(ctx)
 	}
@@ -170,16 +167,6 @@ func (a *Dialer) dial(ctx context.Context) (*ClientConn, error) {
 	}
 }
 
-// The TS_FORCE_NOISE_443 envknob forces the controlclient noise dialer to
-// always use port 443 HTTPS connections to the controlplane and not try the
-// port 80 HTTP fast path.
-//
-// This is currently (2023-01-17) needed for Docker Desktop's "VPNKit" proxy
-// that breaks port 80 for us post-Noise-handshake, causing us to never try port
-// 443. Until one of Docker's proxy and/or this package's port 443 fallback is
-// fixed, this is a workaround. It might also be useful for future debugging.
-var forceNoise443 = envknob.RegisterBool("TS_FORCE_NOISE_443")
-
 // forceNoise443 reports whether the controlclient noise dialer should always
 // use HTTPS connections as its underlay connection (double crypto). This can
 // be necessary when networks or middle boxes are messing with port 80.
@@ -191,9 +178,6 @@ func (d *Dialer) forceNoise443() bool {
 		// costs server-side but the costs are tiny and number of Plan 9
 		// users doesn't make it worth it. Just disable this and always use
 		// HTTPS for Plan 9. That also reduces some log spam.
-		return true
-	}
-	if forceNoise443() {
 		return true
 	}
 
@@ -219,8 +203,6 @@ func (d *Dialer) clock() tstime.Clock {
 	}
 	return tstime.StdClock{}
 }
-
-var debugNoiseDial = envknob.RegisterBool("TS_DEBUG_NOISE_DIAL")
 
 // dialHost connects to the configured Dialer.Hostname and upgrades the
 // connection into a controlbase.Conn.
@@ -269,13 +251,7 @@ func (a *Dialer) dialHostOpt(ctx context.Context, optAddr netip.Addr, optACEHost
 	}
 	ch := make(chan tryURLRes) // must be unbuffered
 	try := func(u *url.URL) {
-		if debugNoiseDial() {
-			a.logf("trying noise dial (%v, %v) ...", u, cmp.Or(optACEHost, optAddr.String()))
-		}
 		cbConn, err := a.dialURL(ctx, u, optAddr, optACEHost)
-		if debugNoiseDial() {
-			a.logf("noise dial (%v, %v) = (%v, %v)", u, cmp.Or(optACEHost, optAddr.String()), cbConn, err)
-		}
 		select {
 		case ch <- tryURLRes{u, cbConn, err}:
 		case <-ctx.Done():
@@ -287,7 +263,7 @@ func (a *Dialer) dialHostOpt(ctx context.Context, optAddr netip.Addr, optACEHost
 
 	forceTLS := a.forceNoise443()
 
-	// Start the plaintext HTTP attempt first, unless disabled by the envknob.
+	// Start the plaintext HTTP attempt first.
 	if !forceTLS || u443 == nil {
 		go try(u80)
 	}
