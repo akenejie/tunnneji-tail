@@ -17,37 +17,37 @@ jobs:
           - goos: linux
             goarch: amd64
             os: ubuntu-latest
-            artifact: tunnneji-tail-linux-amd64
+            ext: ""
           - goos: linux
             goarch: arm64
             os: ubuntu-latest
-            artifact: tunnneji-tail-linux-arm64
+            ext: ""
           - goos: linux
             goarch: arm
             os: ubuntu-latest
-            artifact: tunnneji-tail-linux-arm
+            ext: ""
           - goos: linux
             goarch: "386"
             os: ubuntu-latest
-            artifact: tunnneji-tail-linux-386
+            ext: ""
           # Windows
           - goos: windows
             goarch: amd64
             os: windows-latest
-            artifact: tunnneji-tail-windows-amd64.exe
+            ext: ".exe"
           - goos: windows
             goarch: arm64
             os: windows-latest
-            artifact: tunnneji-tail-windows-arm64.exe
+            ext: ".exe"
           # macOS
           - goos: darwin
             goarch: amd64
             os: macos-latest
-            artifact: tunnneji-tail-darwin-amd64
+            ext: ""
           - goos: darwin
             goarch: arm64
             os: macos-latest
-            artifact: tunnneji-tail-darwin-arm64
+            ext: ""
 
     steps:
     - uses: actions/checkout@v4
@@ -59,16 +59,22 @@ jobs:
         cache: true
 
     - name: Build
+      shell: bash
       env:
         GOOS: ${{ matrix.goos }}
         GOARCH: ${{ matrix.goarch }}
-      run: go build -v -trimpath -tags "ts_omit_systray,ts_omit_webclient,ts_omit_webbrowser,ts_omit_qrcodes,ts_omit_colorable,ts_omit_desktop_sessions,ts_omit_completion,ts_omit_completion_scripts,ts_omit_drive" -ldflags="-s -w" -o ${{ matrix.artifact }} ./cmd/tunnneji-tail
+        ARTIFACT_EXT: ${{ matrix.ext }}
+      run: |
+        VERSION="v$(cat VERSION.txt)"
+        ARTIFACT="tunnneji-tail_${VERSION}_${GOOS}_${GOARCH}${ARTIFACT_EXT}"
+        go build -v -trimpath -tags "ts_omit_systray,ts_omit_webclient,ts_omit_webbrowser,ts_omit_qrcodes,ts_omit_colorable,ts_omit_desktop_sessions,ts_omit_completion,ts_omit_completion_scripts,ts_omit_drive" -ldflags="-s -w" -o "${ARTIFACT}" ./cmd/tunnneji-tail
+        echo "artifact=${ARTIFACT}" >> $GITHUB_ENV
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ matrix.artifact }}
-        path: ${{ matrix.artifact }}
+        name: ${{ env.artifact }}
+        path: ${{ env.artifact }}
 
   release:
     needs: build
